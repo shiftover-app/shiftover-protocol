@@ -1,0 +1,136 @@
+import Foundation
+
+// MARK: - RPC
+//
+// Request/response over `.request` / `.response` frames. Every method here maps
+// onto a verb the DESKTOP ALREADY IMPLEMENTS — that is the whole reason the
+// mobile app is tractable (PLAN_45): `replyToAgent`, `answerAgentPermission`,
+// `enqueueTask`, `approveAndMergeReview`, `createReviewPR` and
+// `requestReviewChanges` are written and hardened. Go is a second client for
+// existing behaviour, not new behaviour.
+//
+// Correlation is an explicit `id` rather than ordering, because terminal bulk
+// frames interleave freely with control frames on the same socket.
+
+public struct RPCRequest: Codable, Sendable, Equatable {
+    public let id: UUID
+    public let method: RPCMethod
+
+    public init(id: UUID = UUID(), method: RPCMethod) {
+        self.id = id
+        self.method = method
+    }
+}
+
+public struct RPCResponse: Codable, Sendable, Equatable {
+    public let id: UUID
+    public let result: RPCResult
+
+    public init(id: UUID, result: RPCResult) {
+        self.id = id
+        self.result = result
+    }
+}
+
+/// The verbs Go may invoke.
+///
+/// ⚠️ **Additive only within a protocol major version** (D16). A desktop that
+/// receives a method it does not recognise must answer
+/// `.failure(.unsupportedMethod)` — NOT drop the connection. Swift's synthesized
+/// enum `Codable` throws on an unknown case, so the dispatcher is responsible
+/// for catching that decode failure and converting it into that response; see
+/// `RPCErrorCode.unsupportedMethod`.
+public enum RPCMethod: Codable, Sendable, Equatable {
+
+    // ── Read ─────────────────────────────────────────────────────────────
+    case listProjects
+    case listWorktrees(projectID: UUID?)
+    case fleetSummary
+    case reviewItems
+    case monitorSummary(worktreeID: UUID)
+    case listPanes(worktreeID: UUID)
+
+    // ── Write: unblock an agent ──────────────────────────────────────────
+    /// → `AppState.replyToAgent`
+    case replyToAgent(worktreeID: UUID, text: String)
+    /// → `AppState.answerAgentPermission`. Note the desktop only claims a
+    /// permission contract for Claude Code; other agents focus instead of
+    /// pressing an unverified key, and will answer `.unsupportedForAgent`.
+    case answerPermission(worktreeID: UUID, allow: Bool)
+
+    // ── Write: fleet ─────────────────────────────────────────────────────
+    case enqueueTask(projectID: UUID, prompt: String,
+                     agent: AgentKindDTO, baseBranch: String?)
+    case approveAndMerge(worktreeID: UUID)
+    case createPullRequest(worktreeID: UUID)
+    case requestChanges(worktreeID: UUID, text: String)
+
+    // ── Terminal streaming ───────────────────────────────────────────────
+    /// Begin receiving `.terminalData` for this pane. The desktop replies with
+    /// `.terminalAttached` carrying a scrollback backfill plus the pane's
+    /// CURRENT geometry — `onOutputChunk` is a live tap with no history, so
+    /// without the backfill a phone attaching mid-session sees a blank screen
+    /// until the agent happens to emit something (D8).
+    case attachTerminal(paneID: UUID)
+    case detachTerminal(paneID: UUID)
+}
+
+public enum RPCResult: Codable, Sendable, Equatable {
+    case projects([ProjectDTO])
+    case worktrees([WorktreeDTO])
+    case fleetSummary(FleetSummaryDTO)
+    case reviewItems([ReviewItemDTO])
+    case monitorSummary(MonitorSummaryDTO?)
+    case panes([PaneDTO])
+    case terminalAttached(TerminalAttachment)
+    /// A mutating verb that succeeded and has nothing to return.
+    case ok
+    case failure(RPCError)
+}
+
+public struct RPCError: Codable, Sendable, Equatable, Error {
+    public let code: RPCErrorCode
+    /// Human-readable, surfaced verbatim in Go. Desktop-side failures (a git
+    /// hook rejection, `gh` stderr) are already surfaced verbatim on the
+    /// desktop; do the same here rather than flattening to "something failed".
+    public let message: String
+
+    public init(code: RPCErrorCode, message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
+public enum RPCErrorCode: String, Codable, Sendable, Equatable {
+    case unauthorized
+    case notFound
+    /// This desktop build does not know the requested method — i.e. Go is
+    /// NEWER than the Mac. The actionable path is "update Shiftover".
+    case unsupportedMethod
+    /// The verb exists but not for this worktree's agent (e.g. a permission
+    /// answer for an agent whose TUI contract is uncharacterised).
+    case unsupportedForAgent
+    /// Precondition failed — e.g. approve-and-merge on a dirty tree.
+    case preconditionFailed
+    case incompatibleVersion
+    case internalError
+}
+
+/// Everything Go needs to start rendering a live terminal.
+public struct TerminalAttachment: Codable, Sendable, Equatable {
+    public let paneID: UUID
+    /// **The desktop owns the winsize.** Go renders at these dimensions and
+    /// zooms/letterboxes to fit the phone; it must NOT renegotiate, or it
+    /// reflows the desktop pane under the user and wrecks any running TUI (D8).
+    public let cols: Int
+    public let rows: Int
+    /// Scrollback prefix to feed before switching to the live stream.
+    public let backfill: Data
+
+    public init(paneID: UUID, cols: Int, rows: Int, backfill: Data) {
+        self.paneID = paneID
+        self.cols = cols
+        self.rows = rows
+        self.backfill = backfill
+    }
+}

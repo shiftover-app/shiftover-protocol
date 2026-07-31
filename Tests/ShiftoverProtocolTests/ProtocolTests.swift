@@ -1,0 +1,247 @@
+import XCTest
+@testable import ShiftoverProtocol
+
+// The load-bearing properties of the wire format. These are cheap to run and
+// pin the things that would be expensive to discover from a shipped iOS build.
+
+final class FrameTests: XCTestCase {
+
+    func testRoundTripsEveryFrameType() throws {
+        let payload = Data("hello".utf8)
+        for type in FrameType.allCases {
+            let decoded = try XCTUnwrap(Frame.decode(Frame(type: type, payload: payload).encoded()))
+            XCTAssertEqual(decoded.type, type)
+            XCTAssertEqual(decoded.payload, payload)
+        }
+    }
+
+    func testEmptyPayloadIsValid() throws {
+        let decoded = try XCTUnwrap(Frame.decode(Frame(type: .hello, payload: Data()).encoded()))
+        XCTAssertEqual(decoded.type, .hello)
+        XCTAssertTrue(decoded.payload.isEmpty)
+    }
+
+    /// D16: an unrecognised tag must decode to `nil` so the reader can SKIP it.
+    /// If this ever throws or traps instead, a newer peer introducing a frame
+    /// type would kill older sessions rather than being ignored by them.
+    func testUnknownTagDecodesToNilRatherThanFailing() {
+        let unknown = Data([0xFE]) + Data("payload".utf8)
+        XCTAssertNil(Frame.decode(unknown))
+    }
+
+    func testEmptyMessageDecodesToNil() {
+        XCTAssertNil(Frame.decode(Data()))
+    }
+
+    /// No two frame types may share a tag — a collision would silently route
+    /// bulk bytes into the JSON decoder.
+    func testFrameTagsAreUnique() {
+        let tags = FrameType.allCases.map(\.rawValue)
+        XCTAssertEqual(Set(tags).count, tags.count)
+    }
+}
+
+final class TerminalPayloadTests: XCTestCase {
+
+    func testRoundTrip() throws {
+        let id = UUID()
+        let bytes = Data([0x1B, 0x5B, 0x33, 0x31, 0x6D]) // ESC [ 3 1 m
+        let decoded = try XCTUnwrap(
+            TerminalPayload.decode(TerminalPayload(paneID: id, bytes: bytes).encoded()))
+        XCTAssertEqual(decoded.paneID, id)
+        XCTAssertEqual(decoded.bytes, bytes)
+    }
+
+    /// An attach with no output yet is legitimate — 16 bytes and nothing more.
+    func testEmptyBytesIsValid() throws {
+        let id = UUID()
+        let decoded = try XCTUnwrap(
+            TerminalPayload.decode(TerminalPayload(paneID: id, bytes: Data()).encoded()))
+        XCTAssertEqual(decoded.paneID, id)
+        XCTAssertTrue(decoded.bytes.isEmpty)
+    }
+
+    func testTruncatedPayloadDecodesToNil() {
+        XCTAssertNil(TerminalPayload.decode(Data(repeating: 0, count: 15)))
+        XCTAssertNil(TerminalPayload.decode(Data()))
+    }
+
+    func testUUIDByteRoundTripIsStable() throws {
+        for _ in 0..<100 {
+            let id = UUID()
+            XCTAssertEqual(UUID(protocolBytes: id.protocolBytes), id)
+        }
+        XCTAssertEqual(UUID().protocolBytes.count, 16)
+        XCTAssertNil(UUID(protocolBytes: Data(repeating: 0, count: 17)))
+    }
+
+    /// Binary framing exists to avoid base64 inflation on the highest-volume
+    /// payload (D8). Pin that it actually is compact: 16 bytes of overhead,
+    /// not ~4/3 of the body.
+    func testOverheadIsFixedSixteenBytes() {
+        let body = Data(repeating: 0x41, count: 4096)
+        let encoded = TerminalPayload(paneID: UUID(), bytes: body).encoded()
+        XCTAssertEqual(encoded.count, body.count + 16)
+    }
+}
+
+final class VersionNegotiationTests: XCTestCase {
+
+    func testSameVersionIsCompatible() {
+        XCTAssertEqual(ProtocolVersion.check(peerVersion: ProtocolVersion.current),
+                       .compatible(negotiated: ProtocolVersion.current))
+    }
+
+    func testNewerPeerIsRefusedWithNumbers() {
+        let result = ProtocolVersion.check(peerVersion: ProtocolVersion.current + 1)
+        XCTAssertEqual(result, .peerTooNew(peer: ProtocolVersion.current + 1,
+                                           current: ProtocolVersion.current))
+        XCTAssertFalse(result.isCompatible)
+    }
+
+    func testOlderPeerBelowFloorIsRefused() {
+        let result = ProtocolVersion.check(peerVersion: ProtocolVersion.minimumSupported - 1)
+        XCTAssertEqual(result, .peerTooOld(peer: ProtocolVersion.minimumSupported - 1,
+                                           minimumSupported: ProtocolVersion.minimumSupported))
+    }
+
+    func testNegotiatedVersionNeverExceedsWhatWeSpeak() {
+        // Widen the floor hypothetically: whatever the peer claims, the
+        // negotiated value must stay within our own understanding.
+        for peer in ProtocolVersion.minimumSupported...ProtocolVersion.current {
+            guard case .compatible(let negotiated) = ProtocolVersion.check(peerVersion: peer) else {
+                return XCTFail("expected compatible for peer \(peer)")
+            }
+            XCTAssertLessThanOrEqual(negotiated, ProtocolVersion.current)
+        }
+    }
+
+    /// D16 demands an *actionable* refusal. Assert both sides are told to
+    /// update the correct thing — a message that blames the wrong end is worse
+    /// than no message.
+    func testRefusalNamesTheRightSideToUpdate() throws {
+        let phoneIsNewer = ProtocolVersion.check(peerVersion: ProtocolVersion.current + 1)
+
+        // Desktop sees a newer phone → the DESKTOP must update.
+        let onDesktop = try XCTUnwrap(phoneIsNewer.refusalMessage(localSideIsPhone: false))
+        XCTAssertTrue(onDesktop.contains("Mac"), onDesktop)
+
+        // Phone sees a newer desktop → GO must update.
+        let onPhone = try XCTUnwrap(phoneIsNewer.refusalMessage(localSideIsPhone: true))
+        XCTAssertTrue(onPhone.contains("App Store"), onPhone)
+
+        XCTAssertNil(VersionCompatibility.compatible(negotiated: 1)
+            .refusalMessage(localSideIsPhone: true))
+    }
+}
+
+final class CodableShapeTests: XCTestCase {
+
+    private func roundTrip<T: Codable & Equatable>(_ value: T) throws -> T {
+        try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+    }
+
+    func testHandshakeRoundTrips() throws {
+        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "Marko's iPhone")
+        XCTAssertEqual(try roundTrip(hello), hello)
+
+        let ack = HelloAck(appVersion: "0.4.2", hostName: "Markos-MacBook-Pro",
+                           capabilities: [.read, .write, .terminalStream])
+        XCTAssertEqual(try roundTrip(ack), ack)
+    }
+
+    /// An unknown capability from a NEWER desktop must degrade to `.unknown`
+    /// rather than failing the whole `HelloAck` — otherwise adding a capability
+    /// would break every older Go at the handshake.
+    func testUnknownCapabilityDegradesInsteadOfFailingTheHandshake() throws {
+        let json = """
+        {"protocolVersion":1,"appVersion":"9.9.9","hostName":"Mac",
+         "capabilities":["read","teleportation"]}
+        """
+        let ack = try JSONDecoder().decode(HelloAck.self, from: Data(json.utf8))
+        XCTAssertTrue(ack.capabilities.contains(.read))
+        XCTAssertTrue(ack.capabilities.contains(.unknown))
+    }
+
+    func testEveryRPCMethodRoundTrips() throws {
+        let methods: [RPCMethod] = [
+            .listProjects,
+            .listWorktrees(projectID: nil),
+            .listWorktrees(projectID: UUID()),
+            .fleetSummary,
+            .reviewItems,
+            .monitorSummary(worktreeID: UUID()),
+            .listPanes(worktreeID: UUID()),
+            .replyToAgent(worktreeID: UUID(), text: "keep going"),
+            .answerPermission(worktreeID: UUID(), allow: true),
+            .enqueueTask(projectID: UUID(), prompt: "fix the flake",
+                         agent: .claude, baseBranch: "main"),
+            .approveAndMerge(worktreeID: UUID()),
+            .createPullRequest(worktreeID: UUID()),
+            .requestChanges(worktreeID: UUID(), text: "add a test"),
+            .attachTerminal(paneID: UUID()),
+            .detachTerminal(paneID: UUID())
+        ]
+        for method in methods {
+            XCTAssertEqual(try roundTrip(RPCRequest(method: method)).method, method)
+        }
+    }
+
+    func testRPCResultsRoundTrip() throws {
+        let results: [RPCResult] = [
+            .projects([ProjectDTO(id: UUID(), name: "shiftover", isGit: true)]),
+            .fleetSummary(FleetSummaryDTO(queued: 2, working: 3, toReview: 1)),
+            .monitorSummary(nil),
+            .ok,
+            .failure(RPCError(code: .preconditionFailed, message: "worktree is dirty"))
+        ]
+        for result in results {
+            XCTAssertEqual(try roundTrip(RPCResponse(id: UUID(), result: result)).result, result)
+        }
+    }
+
+    /// `Data` must survive the JSON round trip — the attach backfill rides here,
+    /// and a phone that renders a corrupted scrollback is worse than one that
+    /// renders none.
+    func testTerminalAttachmentPreservesBackfillBytes() throws {
+        let backfill = Data((0...255).map(UInt8.init))
+        let attachment = TerminalAttachment(paneID: UUID(), cols: 120, rows: 40, backfill: backfill)
+        XCTAssertEqual(try roundTrip(attachment).backfill, backfill)
+    }
+
+    func testServerEventsRoundTrip() throws {
+        let events: [ServerEvent] = [
+            .agentStatusChanged(worktreeID: UUID(), previous: .working,
+                                current: .permission, message: "Allow edit to src/main.rs?"),
+            .worktreesChanged,
+            .fleetSummaryChanged(FleetSummaryDTO(queued: 0, working: 1, toReview: 2)),
+            .terminalResized(paneID: UUID(), cols: 80, rows: 24),
+            .terminalClosed(paneID: UUID()),
+            .hostGoingAway(reason: .sleeping)
+        ]
+        for event in events {
+            XCTAssertEqual(try roundTrip(event), event)
+        }
+    }
+}
+
+final class DTOSemanticsTests: XCTestCase {
+
+    func testNeedsAttentionMatchesTheWaitingStates() {
+        XCTAssertEqual(
+            Set([AgentStatusDTO.input, .permission, .error]),
+            Set([AgentStatusDTO.idle, .present, .working, .input,
+                 .permission, .done, .error].filter(\.needsAttention)))
+    }
+
+    func testContextFractionClampsAndSurvivesUnknownLimit() {
+        func summary(used: Int, limit: Int) -> MonitorSummaryDTO {
+            MonitorSummaryDTO(agent: "claude", model: "Opus 5", contextUsed: used,
+                              contextLimit: limit, estimatedCostUSD: 0, promptCount: 0)
+        }
+        XCTAssertEqual(summary(used: 100_000, limit: 200_000).contextFraction, 0.5)
+        XCTAssertEqual(summary(used: 0, limit: 0).contextFraction, 0)          // no divide-by-zero
+        XCTAssertEqual(summary(used: 999, limit: 100).contextFraction, 1)      // clamped
+        XCTAssertEqual(summary(used: -5, limit: 100).contextFraction, 0)       // clamped
+    }
+}
