@@ -25,10 +25,24 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
-        .library(name: "ShiftoverProtocol", targets: ["ShiftoverProtocol"])
+        .library(name: "ShiftoverProtocol", targets: ["ShiftoverProtocol"]),
+        // A command-line stand-in for Shiftover Go. Pairs with a running
+        // Shiftover and exercises the RPC surface over a real socket — the unit
+        // tests prove the crypto is correct, this proves the pieces are
+        // actually connected to each other. Doubles as the reference
+        // implementation for Go's client: whatever the probe does, the iOS app
+        // must do.
+        //
+        // macOS-only in practice (it is a CLI), but it costs nothing to leave
+        // it in the same package as the library it exercises.
+        .executable(name: "shiftover-probe", targets: ["shiftover-probe"])
     ],
     targets: [
         .target(name: "ShiftoverProtocol"),
+        .executableTarget(
+            name: "shiftover-probe",
+            dependencies: ["ShiftoverProtocol"]
+        ),
         .testTarget(
             name: "ShiftoverProtocolTests",
             dependencies: ["ShiftoverProtocol"]

@@ -142,12 +142,38 @@ final class CodableShapeTests: XCTestCase {
     }
 
     func testHandshakeRoundTrips() throws {
-        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "Marko's iPhone")
+        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "Marko's iPhone",
+                          publicKey: Data(repeating: 7, count: 32),
+                          sessionNonce: Data(repeating: 9, count: 32))
         XCTAssertEqual(try roundTrip(hello), hello)
 
         let ack = HelloAck(appVersion: "0.4.2", hostName: "Markos-MacBook-Pro",
-                           capabilities: [.read, .write, .terminalStream])
+                           capabilities: [.read, .write, .terminalStream],
+                           sessionNonce: Data(repeating: 3, count: 32))
         XCTAssertEqual(try roundTrip(ack), ack)
+    }
+
+    /// The pairing fields are present only on a first connection. A return
+    /// `Hello` omits them entirely and must still decode — otherwise every
+    /// reconnection after the initial QR scan would fail.
+    func testHelloWithoutPairingFieldsRoundTrips() throws {
+        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "iPhone",
+                          publicKey: Data(repeating: 1, count: 32),
+                          sessionNonce: Data(repeating: 2, count: 32))
+        let decoded = try roundTrip(hello)
+        XCTAssertNil(decoded.pairingID)
+        XCTAssertNil(decoded.pairingTag)
+        XCTAssertEqual(decoded, hello)
+    }
+
+    func testHelloCarriesPairingFieldsWhenRedeeming() throws {
+        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "iPhone",
+                          publicKey: Data(repeating: 1, count: 32),
+                          sessionNonce: Data(repeating: 2, count: 32),
+                          pairingID: "abc123", pairingTag: Data(repeating: 4, count: 32))
+        let decoded = try roundTrip(hello)
+        XCTAssertEqual(decoded.pairingID, "abc123")
+        XCTAssertEqual(decoded.pairingTag, Data(repeating: 4, count: 32))
     }
 
     /// An unknown capability from a NEWER desktop must degrade to `.unknown`
@@ -156,6 +182,7 @@ final class CodableShapeTests: XCTestCase {
     func testUnknownCapabilityDegradesInsteadOfFailingTheHandshake() throws {
         let json = """
         {"protocolVersion":1,"appVersion":"9.9.9","hostName":"Mac",
+         "sessionNonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
          "capabilities":["read","teleportation"]}
         """
         let ack = try JSONDecoder().decode(HelloAck.self, from: Data(json.utf8))

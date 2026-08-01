@@ -33,7 +33,7 @@ public enum AgentKindDTO: String, Codable, Sendable, Equatable, CaseIterable {
     case claude, codex, gemini, copilot, opencode
 }
 
-public struct ProjectDTO: Codable, Sendable, Equatable, Identifiable {
+public struct ProjectDTO: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     public let name: String
     /// Non-git (plain directory) projects hide git-only affordances in Go, the
@@ -47,7 +47,7 @@ public struct ProjectDTO: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-public struct WorktreeDTO: Codable, Sendable, Equatable, Identifiable {
+public struct WorktreeDTO: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     public let projectID: UUID
     public let branch: String
@@ -71,7 +71,7 @@ public struct WorktreeDTO: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-public struct PaneDTO: Codable, Sendable, Equatable, Identifiable {
+public struct PaneDTO: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     /// Raw `PaneType` value. A string, not an enum, precisely so a desktop that
     /// gains a new pane type does not break an older Go — it renders as an
@@ -91,7 +91,7 @@ public struct PaneDTO: Codable, Sendable, Equatable, Identifiable {
 
 /// The one-line cross-section the desktop already computes for the Fleet pane
 /// toolbar (`AppState.fleetSummary`), e.g. "2 queued · 3 working · 1 to review".
-public struct FleetSummaryDTO: Codable, Sendable, Equatable {
+public struct FleetSummaryDTO: Codable, Sendable, Hashable {
     public let queued: Int
     public let working: Int
     public let toReview: Int
@@ -103,7 +103,7 @@ public struct FleetSummaryDTO: Codable, Sendable, Equatable {
     }
 }
 
-public struct ReviewItemDTO: Codable, Sendable, Equatable, Identifiable {
+public struct ReviewItemDTO: Codable, Sendable, Hashable, Identifiable {
     public var id: UUID { worktreeID }
     public let worktreeID: UUID
     public let projectName: String
@@ -131,7 +131,7 @@ public struct ReviewItemDTO: Codable, Sendable, Equatable, Identifiable {
 /// A trimmed projection of the desktop's `MonitorSnapshot` — the numbers that
 /// fit a phone screen, not the whole cockpit (composition bar, pulse sparkline
 /// and timeline stay desktop-only for now).
-public struct MonitorSummaryDTO: Codable, Sendable, Equatable {
+public struct MonitorSummaryDTO: Codable, Sendable, Hashable {
     public let agent: String          // "claude" | "codex"
     public let model: String          // display name, e.g. "Opus 5"
     public let contextUsed: Int

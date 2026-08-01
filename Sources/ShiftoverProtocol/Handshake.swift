@@ -19,19 +19,51 @@ public struct Hello: Codable, Sendable, Equatable {
     /// Marketing version of the sending build, e.g. "0.4.2". Diagnostics only —
     /// never branch on this, branch on `protocolVersion`.
     public let appVersion: String
-    /// Stable per-device identity, minted by the Mac at pairing.
+    /// Stable per-device identity. **Self-asserted — never trust it alone.**
     public let deviceID: UUID
     /// Human-readable, for the desktop's paired-device list. e.g. "Marko's iPhone"
     public let deviceName: String
 
+    /// The device's long-term X25519 public key (32 bytes).
+    ///
+    /// **This is the credential.** On a return connection the Mac finds the
+    /// paired device by matching this, so possession of the corresponding
+    /// private key is what authenticates — not `deviceID`, which any client can
+    /// simply claim.
+    public let publicKey: Data
+
+    /// Fresh 32-byte per-session value, feeding the HKDF salt alongside the
+    /// Mac's counterpart. Without it every session between a given pair would
+    /// reuse one key while the frame counters restarted from zero — which is
+    /// precisely the nonce reuse the per-direction key split exists to prevent.
+    public let sessionNonce: Data
+
+    /// Set ONLY on the first connection after scanning a QR — identifies which
+    /// displayed code is being redeemed. `nil` on every later connection.
+    public let pairingID: String?
+
+    /// HMAC over both public keys + `pairingID`, keyed by the QR's one-time
+    /// secret. This is what makes a man-in-the-middle fail: an attacker who
+    /// substitutes a public key cannot recompute the tag without the secret,
+    /// and the secret only ever appeared on the Mac's screen.
+    public let pairingTag: Data?
+
     public init(protocolVersion: Int = ProtocolVersion.current,
                 appVersion: String,
                 deviceID: UUID,
-                deviceName: String) {
+                deviceName: String,
+                publicKey: Data,
+                sessionNonce: Data,
+                pairingID: String? = nil,
+                pairingTag: Data? = nil) {
         self.protocolVersion = protocolVersion
         self.appVersion = appVersion
         self.deviceID = deviceID
         self.deviceName = deviceName
+        self.publicKey = publicKey
+        self.sessionNonce = sessionNonce
+        self.pairingID = pairingID
+        self.pairingTag = pairingTag
     }
 }
 
@@ -44,15 +76,19 @@ public struct HelloAck: Codable, Sendable, Equatable {
     /// it knows the other end cannot serve, rather than surfacing a failure
     /// after the user taps.
     public let capabilities: Set<Capability>
+    /// The Mac's half of the session-key salt. See `Hello.sessionNonce`.
+    public let sessionNonce: Data
 
     public init(protocolVersion: Int = ProtocolVersion.current,
                 appVersion: String,
                 hostName: String,
-                capabilities: Set<Capability>) {
+                capabilities: Set<Capability>,
+                sessionNonce: Data) {
         self.protocolVersion = protocolVersion
         self.appVersion = appVersion
         self.hostName = hostName
         self.capabilities = capabilities
+        self.sessionNonce = sessionNonce
     }
 }
 
