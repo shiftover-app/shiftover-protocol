@@ -12,8 +12,13 @@
 // this file does, the iOS app must do.
 //
 //   USAGE
-//     shiftover-probe pair "shiftover://pair?v=1&id=…"   # first time
+//     SHIFTOVER_PORT=56658 shiftover-probe pair "shiftover://pair?v=1&id=…"
 //     shiftover-probe connect <host> <port>              # subsequent
+//
+//   `connect` also opens the busiest conversation and waits `SHIFTOVER_WAIT`
+//   seconds (default 20) for a live append. That wait is the only check that
+//   proves *streaming* rather than request/response: type at the agent while it
+//   runs and the message should appear here unsolicited.
 //
 // Pairing state is kept in ./shiftover-probe-state.json — a throwaway, and
 // deliberately not in the user's Application Support.
@@ -113,7 +118,9 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
             semaphore.signal()
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            fail("timed out waiting for a frame")
+            // A bounded wait expiring is an ordinary outcome for the streaming
+            // check, not a probe failure — the agent may simply be idle.
+            throw ProbeTimeout()
         }
         switch result {
         case .success(.data(let data)):
@@ -135,9 +142,9 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
         try sendRaw(Frame(type: type, payload: try outbound.seal(plaintext)))
     }
 
-    private func receiveSealed() throws -> (FrameType, Data) {
+    private func receiveSealed(timeout: TimeInterval = 10) throws -> (FrameType, Data) {
         guard let inbound else { fail("no session keys") }
-        let frame = try receiveRaw()
+        let frame = try receiveRaw(timeout: timeout)
         return (frame.type, try inbound.open(frame.payload))
     }
 
@@ -229,7 +236,98 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
     func close() {
         task?.cancel(with: .goingAway, reason: nil)
     }
+
+    // MARK: Conversations
+
+    /// Lists conversations, opens the busiest one, and waits for a live append.
+    ///
+    /// The wait is the part worth having. `listConversations` and
+    /// `conversationMessages` are ordinary request/response and would pass
+    /// against a desktop whose *streaming* was entirely broken — watching a
+    /// message arrive unsolicited is the only thing that proves the
+    /// subscribe → poll → push path is connected end to end.
+    func exerciseConversations(waitingForAppend seconds: TimeInterval) throws {
+        step("Conversations")
+        guard case .conversations(let conversations) =
+                try call(.listConversations(projectID: nil), label: "listConversations") else {
+            return
+        }
+        guard !conversations.isEmpty else {
+            info("no conversations — start Claude Code or Codex in a worktree and re-run")
+            return
+        }
+
+        for conversation in conversations.prefix(10) {
+            let when = conversation.lastActivityAt.map(Self.relative) ?? "never"
+            info("• [\(conversation.agent.rawValue)] \(conversation.branch) — "
+                 + "\(conversation.title ?? "untitled") "
+                 + "(\(when)\(conversation.isLive ? ", live" : ""))")
+        }
+
+        let target = conversations.first { $0.isLive } ?? conversations[0]
+        step("Opening \(target.branch)")
+
+        guard case .conversationMessages(let page) = try call(
+            .conversationMessages(conversationID: target.id, limit: 200),
+            label: "conversationMessages") else { return }
+
+        ok("\(page.messages.count) message(s)\(page.hasOlder ? " — older not sent" : "")")
+        for message in page.messages.suffix(12) {
+            let body = (message.text ?? "").replacingOccurrences(of: "\n", with: " ")
+            let role = message.role.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
+            info("  \(Self.time(message.timestamp))  \(role)\(message.title)  "
+                 + String(body.prefix(70)))
+        }
+
+        guard seconds > 0 else { return }
+        step("Waiting \(Int(seconds))s for a live append — type at the agent to trigger one")
+        let deadline = Date().addingTimeInterval(seconds)
+        var appended = 0
+        while Date() < deadline {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0,
+                  let (type, payload) = try? receiveSealed(timeout: remaining),
+                  type == .event,
+                  let event = try? JSONDecoder().decode(ServerEvent.self, from: payload)
+            else { continue }
+            guard case .conversationMessagesAppended(let id, let messages) = event,
+                  id == target.id else { continue }
+            appended += messages.count
+            for message in messages {
+                ok("live → \(message.role.rawValue) \(message.title): "
+                   + String((message.text ?? "").prefix(70)))
+            }
+        }
+        if appended == 0 {
+            info("no appends in that window — not a failure if the agent was idle")
+        } else {
+            ok("streamed \(appended) message(s)")
+        }
+
+        try call(.unwatchConversation(conversationID: target.id), label: "unwatchConversation")
+    }
+
+    private static func time(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private static func relative(_ date: Date) -> String {
+        let seconds = Int(max(0, Date().timeIntervalSince(date)))
+        switch seconds {
+        case ..<60:     return "just now"
+        case ..<3600:   return "\(seconds / 60)m ago"
+        case ..<86_400: return "\(seconds / 3600)h ago"
+        default:        return "\(seconds / 86_400)d ago"
+        }
+    }
 }
+
+/// A bounded receive that expired. Distinct from a transport error so the
+/// streaming check can treat "nothing arrived" as information rather than as a
+/// failure.
+struct ProbeTimeout: Error {}
 
 /// Tiny wrapper so the probe can hold the cipher without importing the app.
 final class RemoteFrameCipherBox {
@@ -318,6 +416,8 @@ case "pair":
     step("Write-gated verb (expected to be refused — a new device is read-only)")
     try probe.call(.replyToAgent(worktreeID: UUID(), text: "hello"), label: "replyToAgent")
 
+    try probe.exerciseConversations(waitingForAppend: 0)
+
     probe.close()
     print("\n✅ Done. Grant control in Settings → Remote, then re-run `connect` to test writes.\n")
 
@@ -347,6 +447,11 @@ case "connect":
     try probe.call(.listProjects, label: "listProjects")
     try probe.call(.fleetSummary, label: "fleetSummary")
     try probe.call(.replyToAgent(worktreeID: UUID(), text: "probe"), label: "replyToAgent")
+
+    // Reconnect mode waits, because this is where streaming is worth proving:
+    // the pairing run is a cold session with nothing appending yet.
+    let wait = TimeInterval(ProcessInfo.processInfo.environment["SHIFTOVER_WAIT"] ?? "20") ?? 20
+    try probe.exerciseConversations(waitingForAppend: wait)
 
     probe.close()
     print("\n✅ Done.\n")
