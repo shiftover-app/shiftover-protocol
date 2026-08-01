@@ -155,3 +155,149 @@ public struct MonitorSummaryDTO: Codable, Sendable, Hashable {
         return min(1, max(0, Double(contextUsed) / Double(contextLimit)))
     }
 }
+
+// MARK: - Conversations
+//
+// A conversation is ONE agent session — one Claude Code / Codex CLI transcript
+// on disk. That equivalence is the whole design: the agents already write a
+// structured, append-only JSONL record of every prompt, reply, thinking block
+// and tool call, so the phone can render a real message thread without anyone
+// parsing terminal output.
+//
+// ⚠️ **Not parsed from the terminal, deliberately.** Reconstructing messages by
+// scraping a TUI's ANSI output is the approach that has been tried and does not
+// hold up — an agent repaints, rewrites lines, animates spinners and truncates
+// to the pty width, so the "message" you recover is a rendering artefact rather
+// than what the agent said. The transcript is the agent's own record: exact,
+// already segmented, and stable.
+//
+// The consequence worth stating up front: **only agents that write a parseable
+// transcript can be conversations.** Claude Code and Codex CLI do; Gemini,
+// Copilot and OpenCode do not, so they have no conversation and the phone falls
+// back to their terminal. That is a real gap, not an oversight — it is better
+// than inventing messages for them.
+
+/// Which agent wrote a transcript. Narrower than `AgentKindDTO` on purpose:
+/// this is "agents whose sessions can be read", not "agents that can be run".
+public enum ConversationAgentDTO: String, Codable, Sendable, Equatable {
+    case claude
+    case codex
+
+    public var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex:  return "Codex"
+        }
+    }
+}
+
+/// One agent session, as a conversation.
+public struct ConversationDTO: Codable, Sendable, Hashable, Identifiable {
+    /// Stable, opaque, and **derived from the transcript's path** rather than
+    /// minted per connection — so a phone that reconnects, or relaunches, still
+    /// addresses the same conversation without the desktop keeping a registry
+    /// that could drift. Deliberately not the path itself: absolute filesystem
+    /// paths are the user's business and have no reason to cross the wire.
+    public let id: UUID
+    public let worktreeID: UUID
+    public let projectID: UUID
+    public let agent: ConversationAgentDTO
+    /// Branch the session is running against — the primary label, because that
+    /// is how the desktop identifies a worktree too.
+    public let branch: String
+    public let projectName: String
+    /// First user prompt, trimmed. The closest thing a session has to a title,
+    /// and the only part a human recognises a week later.
+    public let title: String?
+    /// Model display name of the most recent turn ("Opus 5").
+    public let model: String?
+    /// Rendered agent status for the owning worktree — lets the list show a
+    /// live dot without a second round trip.
+    public let status: AgentStatusDTO
+    public let messageCount: Int
+    public let lastActivityAt: Date?
+    /// Whether this is the worktree's CURRENT session (the one an agent is
+    /// appending to), as opposed to an earlier session still on disk.
+    public let isLive: Bool
+
+    public init(id: UUID, worktreeID: UUID, projectID: UUID,
+                agent: ConversationAgentDTO, branch: String, projectName: String,
+                title: String?, model: String?, status: AgentStatusDTO,
+                messageCount: Int, lastActivityAt: Date?, isLive: Bool) {
+        self.id = id
+        self.worktreeID = worktreeID
+        self.projectID = projectID
+        self.agent = agent
+        self.branch = branch
+        self.projectName = projectName
+        self.title = title
+        self.model = model
+        self.status = status
+        self.messageCount = messageCount
+        self.lastActivityAt = lastActivityAt
+        self.isLive = isLive
+    }
+}
+
+/// What kind of thing was said. Mirrors the desktop's
+/// `MonitorTimelineEntry.Kind`, with `command` split out of `prompt` because a
+/// slash command is not something the user *said* and should not render as a
+/// message bubble.
+public enum MessageRoleDTO: String, Codable, Sendable, Equatable {
+    case user
+    case assistant
+    case thinking
+    case tool
+    case command
+}
+
+/// One message in a conversation.
+public struct AgentMessageDTO: Codable, Sendable, Hashable, Identifiable {
+    /// The transcript's own `uuid` (plus a block-index suffix when one
+    /// transcript record yields several messages), so identity is stable across
+    /// re-reads and an append never renumbers what is already on screen.
+    public let id: String
+    public let timestamp: Date
+    public let role: MessageRoleDTO
+    /// Leading label — "Prompt" / "Response" / "Thinking" / the tool's name.
+    public let title: String
+    /// Single-line preview. For a tool call, a summary of its input.
+    public let text: String?
+    /// The fuller body, revealed on expansion. `nil` when there is nothing more
+    /// than `text`. Clipped by the desktop so one enormous tool result cannot
+    /// dominate a response.
+    public let expanded: String?
+    /// Estimated tokens attributed to this message; for a tool call, the size
+    /// of its *result* — what actually lands in context.
+    public let tokens: Int?
+
+    public init(id: String, timestamp: Date, role: MessageRoleDTO, title: String,
+                text: String?, expanded: String?, tokens: Int?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.role = role
+        self.title = title
+        self.text = text
+        self.expanded = expanded
+        self.tokens = tokens
+    }
+}
+
+/// A page of messages, oldest → newest (reading order).
+public struct ConversationMessagesDTO: Codable, Sendable, Hashable {
+    public let conversationID: UUID
+    public let messages: [AgentMessageDTO]
+    /// `true` when the desktop is holding a bounded window and older messages
+    /// exist on disk that were not sent.
+    ///
+    /// Stated explicitly rather than left to be inferred from a short list: a
+    /// thread that silently begins in the middle reads as data loss, and the
+    /// phone can say "earlier messages aren't loaded" only if it is told.
+    public let hasOlder: Bool
+
+    public init(conversationID: UUID, messages: [AgentMessageDTO], hasOlder: Bool) {
+        self.conversationID = conversationID
+        self.messages = messages
+        self.hasOlder = hasOlder
+    }
+}

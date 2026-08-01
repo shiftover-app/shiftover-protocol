@@ -50,6 +50,25 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case monitorSummary(worktreeID: UUID)
     case listPanes(worktreeID: UUID)
 
+    // ── Conversations ────────────────────────────────────────────────────
+    /// Every readable agent session, most-recent activity first. `projectID`
+    /// scopes it; `nil` means every project.
+    case listConversations(projectID: UUID?)
+    /// One conversation's messages, oldest → newest — **and subscribes** to its
+    /// appends, exactly as `attachTerminal` both backfills and starts the
+    /// stream. One call rather than fetch-then-subscribe because the two-call
+    /// version has a gap: a message appended between the fetch and the
+    /// subscribe belongs to neither, and the thread silently loses a line.
+    ///
+    /// `limit` is the phone's request, not a promise: the desktop holds a
+    /// bounded window per transcript, and says so via `hasOlder` rather than
+    /// serving a thread that begins in the middle as though it were complete.
+    case conversationMessages(conversationID: UUID, limit: Int)
+    /// Stop streaming this conversation (the `detachTerminal` sibling). A
+    /// dropped socket unsubscribes everything anyway; this is for leaving the
+    /// screen while staying connected.
+    case unwatchConversation(conversationID: UUID)
+
     // ── Write: unblock an agent ──────────────────────────────────────────
     /// → `AppState.replyToAgent`
     case replyToAgent(worktreeID: UUID, text: String)
@@ -81,6 +100,8 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case fleetSummary(FleetSummaryDTO)
     case reviewItems([ReviewItemDTO])
     case monitorSummary(MonitorSummaryDTO?)
+    case conversations([ConversationDTO])
+    case conversationMessages(ConversationMessagesDTO)
     case panes([PaneDTO])
     case terminalAttached(TerminalAttachment)
     /// A mutating verb that succeeded and has nothing to return.
