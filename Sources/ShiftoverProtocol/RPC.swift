@@ -69,6 +69,23 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// screen while staying connected.
     case unwatchConversation(conversationID: UUID)
 
+    // ── Slash commands ───────────────────────────────────────────────────
+    /// The slash commands actually available in this conversation — the
+    /// agent's built-ins plus the user's `~/.claude/commands` and the repo's
+    /// own `.claude/commands`, as they exist ON DISK right now.
+    ///
+    /// Both parameters are load-bearing and neither implies the other. The
+    /// **worktree** locates the repo, and project commands live in it, so the
+    /// honest answer differs between two worktrees running the same agent. The
+    /// **agent** cannot be derived from the worktree, because a worktree may
+    /// have run several over its life and may be running two at once; the
+    /// phone is typing into one specific conversation and knows exactly which.
+    ///
+    /// A request rather than something the handshake carries, because it reads
+    /// the filesystem and the answer changes while a phone is connected: a
+    /// command authored mid-session has to be reachable without reconnecting.
+    case listSlashCommands(worktreeID: UUID, agent: ConversationAgentDTO)
+
     // ── Write: unblock an agent ──────────────────────────────────────────
     /// → `AppState.replyToAgent`
     case replyToAgent(worktreeID: UUID, text: String)
@@ -102,6 +119,7 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case monitorSummary(MonitorSummaryDTO?)
     case conversations([ConversationDTO])
     case conversationMessages(ConversationMessagesDTO)
+    case slashCommands([SlashCommandDTO])
     case panes([PaneDTO])
     case terminalAttached(TerminalAttachment)
     /// A mutating verb that succeeded and has nothing to return.

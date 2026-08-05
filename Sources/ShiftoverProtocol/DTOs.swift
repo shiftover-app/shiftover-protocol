@@ -301,3 +301,54 @@ public struct ConversationMessagesDTO: Codable, Sendable, Hashable {
         self.hasOlder = hasOlder
     }
 }
+
+// MARK: - Slash commands
+
+/// One slash command the worktree's agent will actually accept.
+///
+/// ── Why the desktop enumerates this instead of the phone guessing ───────
+///
+/// Go used to ship a bundled table of built-ins per agent, which is correct as
+/// far as it goes and misses the half that matters: the commands people
+/// actually reach for are their OWN. A user with 46 files in
+/// `~/.claude/commands` and a repo with its own `.claude/commands` would type
+/// `/dep` and be told nothing matched, because the phone had no way to know
+/// they existed. Only the Mac can see them, so only the Mac can answer.
+///
+/// `source` is carried rather than inferred so the picker can say where a
+/// command came from — the same three-way distinction Claude Code itself
+/// draws, and the thing that tells you why `/commit` behaves differently in
+/// two repos.
+public struct SlashCommandDTO: Codable, Sendable, Hashable, Identifiable {
+
+    public enum Source: String, Codable, Sendable, Hashable {
+        /// Shipped by the agent binary itself.
+        case builtIn
+        /// The user's own, from `~/.claude/commands` (or the agent's
+        /// equivalent) — available in every project.
+        case user
+        /// From the repo's `.claude/commands`, so it travels with the code and
+        /// is shared with whoever clones it.
+        case project
+    }
+
+    /// Without the leading slash, and **namespaced** where the agent
+    /// namespaces: a file at `commands/git/sync.md` is the command
+    /// `git:sync`, so the name is not always a bare identifier.
+    public let name: String
+    /// One line, from the file's `description:` frontmatter. Optional because
+    /// a command file is not required to carry any.
+    public let summary: String?
+    /// From `argument-hint:` frontmatter — e.g. `[path]`. Shown after the name.
+    public let argumentHint: String?
+    public let source: Source
+
+    public var id: String { name }
+
+    public init(name: String, summary: String?, argumentHint: String?, source: Source) {
+        self.name = name
+        self.summary = summary
+        self.argumentHint = argumentHint
+        self.source = source
+    }
+}
