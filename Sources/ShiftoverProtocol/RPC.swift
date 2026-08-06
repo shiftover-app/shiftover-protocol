@@ -94,6 +94,21 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// pressing an unverified key, and will answer `.unsupportedForAgent`.
     case answerPermission(worktreeID: UUID, allow: Bool)
 
+    /// Presses **ESC** in the worktree's agent pane — the CLI's own interrupt,
+    /// which stops the agent mid-turn without killing the session.
+    ///
+    /// Its own verb rather than a `replyToAgent` carrying `"\u{1b}"`, for two
+    /// reasons. Reply flattens and appends a carriage return at the pty
+    /// boundary (`AgentInjectionContract.replyPayload`), which would submit the
+    /// escape as a line instead of delivering it as a keypress. And an
+    /// interrupt is not a message: it must reach the agent whatever state the
+    /// desktop believes it is in, so it deliberately skips the latched-prompt
+    /// guard that governs answering a notification.
+    ///
+    /// `.terminalInput` already carries raw bytes, but it is pane-addressed and
+    /// requires an attached terminal; the conversation screen has none.
+    case interruptAgent(worktreeID: UUID)
+
     // ── Write: fleet ─────────────────────────────────────────────────────
     case enqueueTask(projectID: UUID, prompt: String,
                      agent: AgentKindDTO, baseBranch: String?)
