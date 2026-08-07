@@ -109,6 +109,36 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// requires an attached terminal; the conversation screen has none.
     case interruptAgent(worktreeID: UUID)
 
+    /// Reconciles the worktree's agent input box to `text` — and, when
+    /// `submit` is set, presses Return.
+    ///
+    /// This is the phone's composer and the Mac's input box being ONE box
+    /// rather than two that happen to hold similar strings. It is sent as the
+    /// user types, so the Mac shows the message forming, and the same verb
+    /// submits it.
+    ///
+    /// **Full text, not keystrokes**, which is the whole reason this is
+    /// tractable. The Mac can read what its box currently contains, so it
+    /// computes the difference itself and sends the backspaces and characters
+    /// that close it. Three things follow that a keystroke stream does not get:
+    /// a dropped or reordered message self-heals on the next one rather than
+    /// corrupting the line forever; the phone may coalesce a fast burst of
+    /// typing into a single call without the Mac being able to tell; and the
+    /// phone needs to know nothing about pty conventions (DEL, bracketed paste)
+    /// — that vocabulary stays on the side that owns the terminal.
+    ///
+    /// `seq` is a per-conversation counter the Mac echoes back in
+    /// `agentInputChanged` as `appliedSeq`. It exists for exactly one decision:
+    /// the phone adopts the Mac's box only once the ack has caught up with what
+    /// it has sent. Before that the box is a stale render of a keystroke still
+    /// in flight, and adopting it would delete the characters being typed.
+    ///
+    /// `submit` is part of this verb rather than its own so that reconcile and
+    /// Return are ONE main-actor turn on the Mac. Split in two they can
+    /// interleave with a live keystroke, and the failure is silent: the message
+    /// is sent a character short.
+    case setAgentInput(worktreeID: UUID, text: String, seq: UInt64, submit: Bool)
+
     // ── Write: fleet ─────────────────────────────────────────────────────
     case enqueueTask(projectID: UUID, prompt: String,
                      agent: AgentKindDTO, baseBranch: String?)
