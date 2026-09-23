@@ -324,3 +324,23 @@ final class RelayVocabularyTests: XCTestCase {
         XCTAssertEqual(decoded, payload)
     }
 }
+
+final class WriteClassificationTests: XCTestCase {
+    func testWritesAndReads() {
+        let id = UUID()
+        for write: RPCMethod in [.replyToAgent(worktreeID: id, text: "x"),
+                                 .answerPermission(worktreeID: id, allow: true),
+                                 .interruptAgent(worktreeID: id),
+                                 .setAgentInput(worktreeID: id, text: "x", seq: 1, submit: false),
+                                 .approveAndMerge(worktreeID: id),
+                                 .createPullRequest(worktreeID: id),
+                                 .requestChanges(worktreeID: id, text: "x")] {
+            XCTAssertTrue(write.isWrite, "\(write)")
+        }
+        for read: RPCMethod in [.listProjects, .fleetSummary, .reviewItems,
+                                .monitorSummary(worktreeID: id), .attachTerminal(paneID: id),
+                                .conversationMessages(conversationID: id, limit: 10)] {
+            XCTAssertFalse(read.isWrite, "\(read)")
+        }
+    }
+}

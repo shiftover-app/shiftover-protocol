@@ -156,6 +156,36 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case detachTerminal(paneID: UUID)
 }
 
+extension RPCMethod {
+    /// Whether this verb changes anything on the Mac.
+    ///
+    /// Both ends consult it: the Mac refuses these from a device without the
+    /// write grant (D9), and the phone asks for Face ID before sending one, so a
+    /// phone left unlocked on a table is not a remote shell for whoever picks
+    /// it up. One classification, so the two can never disagree about what
+    /// counts as a write. Exhaustive by construction — a new verb does not
+    /// compile until it is classified.
+    public var isWrite: Bool {
+        switch self {
+        case .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+             .monitorSummary, .listPanes, .attachTerminal, .detachTerminal,
+             // Watching an agent changes what the Mac SENDS, never what it
+             // does — which is the point of a read-only device.
+             .listConversations, .conversationMessages, .unwatchConversation,
+             .listSlashCommands:
+            return false
+        case .replyToAgent, .answerPermission, .enqueueTask, .approveAndMerge,
+             .createPullRequest, .requestChanges,
+             // Stopping an agent mid-turn is one of the more consequential writes.
+             .interruptAgent,
+             // Characters typed into an agent's input box are really in the
+             // Mac's terminal, even before Return.
+             .setAgentInput:
+            return true
+        }
+    }
+}
+
 public enum RPCResult: Codable, Sendable, Equatable {
     case projects([ProjectDTO])
     case worktrees([WorktreeDTO])
