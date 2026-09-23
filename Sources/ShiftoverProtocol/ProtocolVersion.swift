@@ -18,15 +18,20 @@ import Foundation
 
 public enum ProtocolVersion {
     /// The version this build speaks.
-    public static let current: Int = 1
+    ///
+    /// 2 replaced v1's cleartext handshake with Noise IK. Nothing had shipped,
+    /// but development builds of Go existed on devices, and bumping is what
+    /// lets them be told "update" rather than silently fail to handshake.
+    public static let current: Int = 2
 
     /// Oldest peer version this build still accepts. Widen the window rather
     /// than bumping `current` whenever a change is additive; bump `current`
     /// AND this together only for a deliberate break.
     ///
-    /// Policy: support N-2. At `current == 1` there is nothing older, so the
-    /// window is degenerate until version 3 ships.
-    public static let minimumSupported: Int = 1
+    /// Policy: support N-2 — from the first version that actually ships. v1
+    /// never did, and its handshake cannot be spoken safely, so the floor sits
+    /// at 2 and the window is degenerate until a later version ships.
+    public static let minimumSupported: Int = 2
 }
 
 /// The outcome of comparing a peer's advertised version against ours.

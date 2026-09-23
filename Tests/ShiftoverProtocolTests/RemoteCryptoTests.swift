@@ -6,133 +6,213 @@ import XCTest
 //
 // Security code, so the tests that matter are the adversarial ones. The happy
 // path is table stakes; what is worth pinning is that tampering, substitution,
-// replay and nonce reuse all FAIL — and fail closed.
+// replay and impersonation all FAIL — and fail closed. The Noise layer itself is
+// pinned against the spec's test vector in `NoiseTests`.
 
-final class RemoteCryptoTests: XCTestCase {
+final class RemoteHandshakeTests: XCTestCase {
 
-    // ── Session keys ─────────────────────────────────────────────────────
-
-    private func agreedSecret() -> (SharedSecret, SharedSecret) {
+    /// One Mac, one phone, and the code the Mac would display.
+    private struct Rig {
         let mac = RemoteIdentityKey()
         let phone = RemoteIdentityKey()
-        return (mac.sharedSecret(withPeerPublicKey: phone.publicKeyData)!,
-                phone.sharedSecret(withPeerPublicKey: mac.publicKeyData)!)
-    }
-
-    func testBothSidesDeriveIdenticalKeys() throws {
-        let (macSide, phoneSide) = agreedSecret()
-        let nonceA = RemotePairing.randomBytes(32)
-        let nonceB = RemotePairing.randomBytes(32)
-
-        let macKeys = RemoteSessionKeys.derive(
-            sharedSecret: macSide, macNonce: nonceA, phoneNonce: nonceB)
-        let phoneKeys = RemoteSessionKeys.derive(
-            sharedSecret: phoneSide, macNonce: nonceA, phoneNonce: nonceB)
-
-        // Round-trip through the cipher rather than comparing SymmetricKeys:
-        // agreeing on bytes is not the property that matters, interoperating is.
-        let sealed = try RemoteFrameCipher(key: macKeys.macToPhone).seal(Data("hello".utf8))
-        let opened = try RemoteFrameCipher(key: phoneKeys.macToPhone).open(sealed)
-        XCTAssertEqual(opened, Data("hello".utf8))
-    }
-
-    /// The two directions must NOT share a key. Both peers count nonces from
-    /// zero independently, so a shared key would collide on every single frame —
-    /// which leaks the XOR of two plaintexts and breaks authentication.
-    func testDirectionsUseDifferentKeys() throws {
-        let (macSide, _) = agreedSecret()
-        let keys = RemoteSessionKeys.derive(
-            sharedSecret: macSide,
-            macNonce: RemotePairing.randomBytes(32),
-            phoneNonce: RemotePairing.randomBytes(32))
-
-        let sealed = try RemoteFrameCipher(key: keys.macToPhone).seal(Data("secret".utf8))
-        XCTAssertThrowsError(try RemoteFrameCipher(key: keys.phoneToMac).open(sealed),
-                             "a frame sealed for one direction must not open with the other's key")
-    }
-
-    /// Fresh nonces are why a session key is not merely a function of the two
-    /// identity keys. Without them every session between a pair would reuse one
-    /// key while the counters restarted from zero.
-    func testFreshNoncesProduceFreshKeys() throws {
-        let (secret, _) = agreedSecret()
-        let fixed = RemotePairing.randomBytes(32)
-
-        let first = RemoteSessionKeys.derive(
-            sharedSecret: secret, macNonce: fixed, phoneNonce: RemotePairing.randomBytes(32))
-        let second = RemoteSessionKeys.derive(
-            sharedSecret: secret, macNonce: fixed, phoneNonce: RemotePairing.randomBytes(32))
-
-        let sealed = try RemoteFrameCipher(key: first.macToPhone).seal(Data("x".utf8))
-        XCTAssertThrowsError(try RemoteFrameCipher(key: second.macToPhone).open(sealed))
-    }
-
-    func testDifferentPairsCannotReadEachOther() throws {
-        let (aliceSecret, _) = agreedSecret()
-        let (malorySecret, _) = agreedSecret()
-        let salt = RemotePairing.randomBytes(32)
-
-        let alice = RemoteSessionKeys.derive(sharedSecret: aliceSecret,
-                                             macNonce: salt, phoneNonce: salt)
-        let malory = RemoteSessionKeys.derive(sharedSecret: malorySecret,
-                                              macNonce: salt, phoneNonce: salt)
-
-        let sealed = try RemoteFrameCipher(key: alice.macToPhone).seal(Data("private".utf8))
-        XCTAssertThrowsError(try RemoteFrameCipher(key: malory.macToPhone).open(sealed))
-    }
-
-    // ── Frame cipher ─────────────────────────────────────────────────────
-
-    private func cipherPair() -> (RemoteFrameCipher, RemoteFrameCipher) {
-        let key = SymmetricKey(size: .bits256)
-        return (RemoteFrameCipher(key: key), RemoteFrameCipher(key: key))
-    }
-
-    func testSealOpenRoundTrip() throws {
-        let (sender, receiver) = cipherPair()
-        for payload in [Data(), Data("hi".utf8), Data(repeating: 0xAB, count: 100_000)] {
-            XCTAssertEqual(try receiver.open(try sender.seal(payload)), payload)
+        let deviceID = UUID()
+        var code: RemotePairing.Code {
+            RemotePairing.makeCode(serviceName: "Mac", publicKey: mac.publicKeyData)
         }
     }
 
-    /// Identical plaintext must not produce identical ciphertext — otherwise an
-    /// observer learns when a repeated command is sent, which for a terminal
-    /// stream is a meaningful leak (think a repeated keystroke or prompt).
-    func testRepeatedPlaintextProducesDistinctCiphertext() throws {
-        let (sender, _) = cipherPair()
-        let payload = Data("ls -la\r".utf8)
-        let outputs = try (0..<50).map { _ in try sender.seal(payload) }
-        XCTAssertEqual(Set(outputs).count, 50)
+    private let ack = HelloAckPayload(appVersion: "1.0", hostName: "Markos-MacBook-Pro",
+                                      capabilities: [.read, .write])
+
+    /// Runs a full handshake and returns both ends' view of it.
+    private func connect(
+        _ rig: Rig, redeeming code: RemotePairing.Code? = nil
+    ) throws -> (incoming: RemoteHandshake.IncomingHello,
+                 phone: RemoteChannel, mac: RemoteChannel, ack: HelloAckPayload) {
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let hello = try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID,
+                                        deviceName: "Marko's iPhone", redeeming: code)
+        let responder = RemoteHandshake.Responder(identity: rig.mac)
+        let incoming = try responder.open(try roundTrip(hello))
+        let (helloAck, macChannel) = try responder.accept(ack)
+        let (ackPayload, phoneChannel) = try initiator.finish(try roundTrip(helloAck))
+        return (incoming, phoneChannel, macChannel, ackPayload)
     }
 
-    func testTamperedCiphertextFailsToOpen() throws {
-        let (sender, receiver) = cipherPair()
-        var sealed = try sender.seal(Data("transfer $10".utf8))
-
-        // Flip one bit somewhere in the middle of the body.
-        let index = sealed.index(sealed.startIndex, offsetBy: sealed.count / 2)
-        sealed[index] ^= 0x01
-
-        XCTAssertThrowsError(try receiver.open(sealed))
+    /// Everything crosses the wire as JSON, so the tests do too.
+    private func roundTrip<T: Codable>(_ value: T) throws -> T {
+        try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
 
-    func testTruncatedFrameFailsToOpen() throws {
-        let (sender, receiver) = cipherPair()
-        let sealed = try sender.seal(Data("some output".utf8))
-        XCTAssertThrowsError(try receiver.open(sealed.dropLast(1)))
-        XCTAssertThrowsError(try receiver.open(Data()))
+    // ── The returning path ───────────────────────────────────────────────
+
+    func testMacLearnsThePhonesProvenKeyAndIdentity() throws {
+        let rig = Rig()
+        let result = try connect(rig)
+        XCTAssertEqual(result.incoming.phonePublicKey, rig.phone.publicKeyData)
+        XCTAssertEqual(result.incoming.identity.deviceName, "Marko's iPhone")
+        XCTAssertEqual(result.incoming.identity.deviceID, rig.deviceID)
+        XCTAssertNil(result.incoming.identity.pairingID)
+        XCTAssertNil(result.incoming.identity.pairingProof)
+        XCTAssertEqual(result.ack, ack)
     }
 
-    /// Out-of-order delivery must still open. The nonce travels with the frame
-    /// rather than being re-derived from a local counter precisely so a
-    /// reordered or dropped frame does not desynchronise the whole stream.
-    func testOutOfOrderFramesStillOpen() throws {
-        let (sender, receiver) = cipherPair()
-        let first = try sender.seal(Data("first".utf8))
-        let second = try sender.seal(Data("second".utf8))
+    func testChannelCarriesFramesBothWays() throws {
+        let result = try connect(Rig())
+        XCTAssertEqual(try result.mac.open(try result.phone.seal(Data("req".utf8))), Data("req".utf8))
+        XCTAssertEqual(try result.phone.open(try result.mac.seal(Data("res".utf8))), Data("res".utf8))
+        XCTAssertEqual(result.phone.handshakeHash, result.mac.handshakeHash)
+    }
 
-        XCTAssertEqual(try receiver.open(second), Data("second".utf8))
-        XCTAssertEqual(try receiver.open(first), Data("first".utf8))
+    func testReplayedFrameIsRejected() throws {
+        let result = try connect(Rig())
+        let keystroke = try result.phone.seal(Data("y\r".utf8))
+        _ = try result.mac.open(keystroke)
+        XCTAssertThrowsError(try result.mac.open(keystroke))
+    }
+
+    func testHelloShowsNothingButTheVersionInTheClear() throws {
+        let rig = Rig()
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let wire = try JSONEncoder().encode(
+            try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID,
+                                deviceName: "Marko's iPhone"))
+        let json = String(decoding: wire, as: UTF8.self)
+        XCTAssertFalse(json.contains("iPhone"))
+        XCTAssertFalse(json.contains(rig.deviceID.uuidString))
+        XCTAssertNil(wire.range(of: rig.phone.publicKeyData))
+        let probe = try JSONDecoder().decode(HandshakeVersionProbe.self, from: wire)
+        XCTAssertEqual(probe.protocolVersion, ProtocolVersion.current)
+    }
+
+    func testPhoneDiallingAnImpostorMacGetsNoAnswer() throws {
+        // The phone encrypts to the key it paired with. A different Mac — or a
+        // man in the middle — cannot open message 1 at all.
+        let rig = Rig()
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let hello = try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID, deviceName: "x")
+        XCTAssertThrowsError(try RemoteHandshake.Responder(identity: RemoteIdentityKey()).open(hello)) {
+            guard case .cryptographic = $0 as? RemoteHandshakeError else {
+                return XCTFail("expected a cryptographic failure, got \($0)")
+            }
+        }
+    }
+
+    func testHelloAckFromAnImpostorFailsOnThePhone() throws {
+        // A man in the middle that answers with its own Noise responder cannot
+        // produce a message 2 the phone accepts.
+        let rig = Rig()
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let hello = try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID, deviceName: "x")
+        let real = RemoteHandshake.Responder(identity: rig.mac)
+        _ = try real.open(hello)
+        let (genuine, _) = try real.accept(ack)
+        var forged = genuine.handshake
+        forged[forged.startIndex + 40] ^= 0xFF
+        XCTAssertThrowsError(try initiator.finish(HelloAck(handshake: forged)))
+    }
+
+    func testIncompatibleVersionIsReportedWithNumbers() throws {
+        let rig = Rig()
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let real = try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID, deviceName: "x")
+        let stale = Hello(protocolVersion: 1, handshake: real.handshake)
+        XCTAssertThrowsError(try RemoteHandshake.Responder(identity: rig.mac).open(stale)) {
+            XCTAssertEqual($0 as? RemoteHandshakeError,
+                           .incompatible(.peerTooOld(peer: 1,
+                                                     minimumSupported: ProtocolVersion.minimumSupported)))
+        }
+    }
+
+    func testPrologueCommitsToTheVersion() {
+        // With one version in the window there is nothing to downgrade to yet,
+        // so this pins the half that makes a future downgrade fail: each version
+        // yields a distinct prologue. `NoiseSecurityTests
+        // .testMismatchedPrologueFailsTheHandshake` pins the other half — a
+        // prologue mismatch fails message 1.
+        XCTAssertNotEqual(RemoteHandshake.prologue(protocolVersion: 2),
+                          RemoteHandshake.prologue(protocolVersion: 3))
+    }
+
+    func testCodeForADifferentMacIsCaughtBeforeSending() throws {
+        let rig = Rig()
+        let initiator = try RemoteHandshake.Initiator(identity: rig.phone,
+                                                      macPublicKey: rig.mac.publicKeyData)
+        let otherMacsCode = RemotePairing.makeCode(serviceName: "Other",
+                                                   publicKey: RemoteIdentityKey().publicKeyData)
+        XCTAssertThrowsError(try initiator.hello(appVersion: "0.1", deviceID: rig.deviceID,
+                                                 deviceName: "x", redeeming: otherMacsCode)) {
+            XCTAssertEqual($0 as? RemoteHandshakeError, .codeDoesNotMatchHost)
+        }
+    }
+
+    func testUnknownCapabilityInTheSealedAckDegrades() throws {
+        // D16 inside the handshake: a newer Mac advertising something this build
+        // has never heard of must not fail the whole connection.
+        let json = #"{"appVersion":"9.9","hostName":"Mac","capabilities":["read","teleportation"]}"#
+        let payload = try JSONDecoder().decode(HelloAckPayload.self, from: Data(json.utf8))
+        XCTAssertEqual(payload.capabilities, [.read, .unknown])
+    }
+
+    // ── Redeeming a code ─────────────────────────────────────────────────
+
+    func testRedemptionCarriesAProofTheMacCanVerify() throws {
+        let rig = Rig()
+        let code = rig.code
+        let result = try connect(rig, redeeming: code)
+        let identity = result.incoming.identity
+        XCTAssertEqual(identity.pairingID, code.pairingID)
+        let proof = try XCTUnwrap(identity.pairingProof)
+        XCTAssertTrue(RemotePairing.verifyPairingProof(
+            proof, secret: code.secret, pairingID: code.pairingID,
+            handshakeHash: result.incoming.handshakeHash))
+    }
+
+    func testProofFromOneHandshakeDoesNotVerifyInAnother() throws {
+        // Binding to the handshake hash is what stops a captured proof — say,
+        // from a connection that dropped — being presented again.
+        let rig = Rig()
+        let code = rig.code
+        let first = try connect(rig, redeeming: code)
+        let second = try connect(rig)
+        let proof = try XCTUnwrap(first.incoming.identity.pairingProof)
+        XCTAssertFalse(RemotePairing.verifyPairingProof(
+            proof, secret: code.secret, pairingID: code.pairingID,
+            handshakeHash: second.incoming.handshakeHash))
+    }
+
+    func testProofWithoutTheSecretFails() throws {
+        let rig = Rig()
+        let code = rig.code
+        let result = try connect(rig, redeeming: code)
+        let proof = try XCTUnwrap(result.incoming.identity.pairingProof)
+        XCTAssertFalse(RemotePairing.verifyPairingProof(
+            proof, secret: RemotePairing.randomBytes(RemotePairing.secretByteCount),
+            pairingID: code.pairingID, handshakeHash: result.incoming.handshakeHash))
+    }
+
+    func testProofIsBoundToItsPairingID() throws {
+        let rig = Rig()
+        let code = rig.code
+        let result = try connect(rig, redeeming: code)
+        let proof = try XCTUnwrap(result.incoming.identity.pairingProof)
+        XCTAssertFalse(RemotePairing.verifyPairingProof(
+            proof, secret: code.secret, pairingID: "a-different-pairing",
+            handshakeHash: result.incoming.handshakeHash))
+    }
+
+    func testGarbageProofIsRejected() {
+        let secret = RemotePairing.randomBytes(RemotePairing.secretByteCount)
+        let hash = RemotePairing.randomBytes(32)
+        for bogus in [Data(), Data(repeating: 0, count: 32), RemotePairing.randomBytes(32)] {
+            XCTAssertFalse(RemotePairing.verifyPairingProof(
+                bogus, secret: secret, pairingID: "id", handshakeHash: hash))
+        }
     }
 
     // ── Identity keys ────────────────────────────────────────────────────
@@ -143,14 +223,13 @@ final class RemoteCryptoTests: XCTestCase {
         XCTAssertEqual(restored.publicKeyData, original.publicKeyData)
     }
 
-    /// Malformed peer input returns nil rather than throwing or trapping — a bad
-    /// key arrives from the network and is an untrusted-input condition, not a
-    /// programming error.
-    func testMalformedPeerKeyIsRejectedGracefully() {
-        let key = RemoteIdentityKey()
-        XCTAssertNil(key.sharedSecret(withPeerPublicKey: Data()))
-        XCTAssertNil(key.sharedSecret(withPeerPublicKey: Data(repeating: 0, count: 31)))
-        XCTAssertNil(key.sharedSecret(withPeerPublicKey: Data(repeating: 0xFF, count: 64)))
+    func testMalformedMacKeyIsRejectedGracefully() {
+        // A bad key comes from a scanned QR or a stored record — untrusted input,
+        // so it must fail as an error, never trap.
+        for bad in [Data(), Data(repeating: 0, count: 31), Data(repeating: 0xFF, count: 64)] {
+            XCTAssertThrowsError(try RemoteHandshake.Initiator(identity: RemoteIdentityKey(),
+                                                               macPublicKey: bad))
+        }
     }
 }
 
@@ -213,89 +292,5 @@ final class RemotePairingTests: XCTestCase {
                 RemotePairing.randomBytes(RemotePairing.secretByteCount)))
         ]
         XCTAssertNil(RemotePairing.parse(components.url!))
-    }
-
-    // ── The MITM defence ─────────────────────────────────────────────────
-
-    func testMatchingTagVerifies() {
-        let code = makeCode()
-        let phone = RemoteIdentityKey().publicKeyData
-        let tag = RemotePairing.authenticationTag(
-            secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone)
-
-        XCTAssertTrue(RemotePairing.verify(
-            tag: tag, secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone))
-    }
-
-    /// **The attack this whole mechanism exists to stop.** A man in the middle
-    /// substitutes their own public key for the phone's; without the secret they
-    /// cannot produce a matching tag, so the Mac refuses.
-    func testSubstitutedPhoneKeyFailsVerification() {
-        let code = makeCode()
-        let realPhone = RemoteIdentityKey().publicKeyData
-        let attacker = RemoteIdentityKey().publicKeyData
-
-        let tag = RemotePairing.authenticationTag(
-            secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: realPhone)
-
-        XCTAssertFalse(RemotePairing.verify(
-            tag: tag, secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: attacker))
-    }
-
-    func testSubstitutedMacKeyFailsVerification() {
-        let code = makeCode()
-        let phone = RemoteIdentityKey().publicKeyData
-        let attacker = RemoteIdentityKey().publicKeyData
-
-        let tag = RemotePairing.authenticationTag(
-            secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone)
-
-        XCTAssertFalse(RemotePairing.verify(
-            tag: tag, secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: attacker, phonePublicKey: phone))
-    }
-
-    /// Without the secret an attacker cannot forge a tag even knowing both
-    /// public keys — which are, after all, public.
-    func testWrongSecretFailsVerification() {
-        let code = makeCode()
-        let phone = RemoteIdentityKey().publicKeyData
-        let tag = RemotePairing.authenticationTag(
-            secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone)
-
-        XCTAssertFalse(RemotePairing.verify(
-            tag: tag, secret: RemotePairing.randomBytes(RemotePairing.secretByteCount),
-            pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone))
-    }
-
-    /// The pairing id is in the HMAC input so a tag captured from one pairing
-    /// cannot be replayed into another.
-    func testTagIsBoundToItsPairingID() {
-        let code = makeCode()
-        let phone = RemoteIdentityKey().publicKeyData
-        let tag = RemotePairing.authenticationTag(
-            secret: code.secret, pairingID: code.pairingID,
-            macPublicKey: code.publicKey, phonePublicKey: phone)
-
-        XCTAssertFalse(RemotePairing.verify(
-            tag: tag, secret: code.secret, pairingID: "a-different-pairing",
-            macPublicKey: code.publicKey, phonePublicKey: phone))
-    }
-
-    func testGarbageTagIsRejected() {
-        let code = makeCode()
-        let phone = RemoteIdentityKey().publicKeyData
-        for bogus in [Data(), Data(repeating: 0, count: 32), RemotePairing.randomBytes(32)] {
-            XCTAssertFalse(RemotePairing.verify(
-                tag: bogus, secret: code.secret, pairingID: code.pairingID,
-                macPublicKey: code.publicKey, phonePublicKey: phone))
-        }
     }
 }

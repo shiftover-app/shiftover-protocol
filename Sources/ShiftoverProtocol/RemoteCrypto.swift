@@ -20,114 +20,208 @@
 // network" one that quietly diverges.
 //
 // CryptoKit ships on macOS and iOS, so this adds no dependency — and, more
-// importantly, no hand-rolled primitives.
+// importantly, no hand-rolled primitives. The handshake itself is Noise IK
+// (`Noise.swift`), verified against the published test vector.
 
 import CryptoKit
 import Foundation
 
-/// Directional session keys for one connection.
+/// One finished, encrypted connection, from one side's point of view.
 ///
-/// **Each direction gets its OWN key.** That is not belt-and-braces: ChaChaPoly
-/// nonces are counters here, and a counter reused under the same key is a
-/// catastrophic failure (it leaks the XOR of two plaintexts and forges the
-/// authenticator). Two peers counting independently from zero under one shared
-/// key would collide on literally every frame. Separate keys make that
-/// structurally impossible rather than something a future refactor must
-/// remember.
-public struct RemoteSessionKeys: Sendable {
-    /// Seals what the Mac sends; opens what the phone receives.
-    public let macToPhone: SymmetricKey
-    /// Seals what the phone sends; opens what the Mac receives.
-    public let phoneToMac: SymmetricKey
+/// Everything after the handshake goes through `seal` / `open`. The nonces are
+/// implicit and position-bound (see `NoiseCipher`), so a frame opens only once
+/// and only in the order it was sealed — a replayed or reordered frame fails
+/// exactly as a forged one does. The WebSocket underneath is ordered and
+/// reliable, so an honest peer never trips that.
+///
+/// **A reference type on purpose**, for the same reason as `NoiseCipher`: the
+/// counters inside must advance once per frame for the life of the connection,
+/// and a copied value would fork them.
+public final class RemoteChannel: @unchecked Sendable {
+    private let transport: NoiseTransport
 
-    /// Derives both directions from a completed X25519 agreement.
-    ///
-    /// - Parameters:
-    ///   - sharedSecret: output of `Curve25519.KeyAgreement` between the two
-    ///     devices' long-term identity keys, established at pairing.
-    ///   - macNonce: the Mac's fresh 32-byte per-session value.
-    ///   - phoneNonce: the phone's.
-    ///
-    /// The nonces are the reason a session key is not simply a function of the
-    /// two identity keys — without them, every session between a given pair
-    /// would reuse the same key while the frame counters restarted from zero,
-    /// reintroducing exactly the collision the direction split prevents.
-    public static func derive(
-        sharedSecret: SharedSecret,
-        macNonce: Data,
-        phoneNonce: Data
-    ) -> RemoteSessionKeys {
-        // Salt binds the keys to THIS session; info separates the directions.
-        let salt = macNonce + phoneNonce
-        return RemoteSessionKeys(
-            macToPhone: sharedSecret.hkdfDerivedSymmetricKey(
-                using: SHA256.self, salt: salt,
-                sharedInfo: Data("shiftover-remote-v1-mac-to-phone".utf8),
-                outputByteCount: 32),
-            phoneToMac: sharedSecret.hkdfDerivedSymmetricKey(
-                using: SHA256.self, salt: salt,
-                sharedInfo: Data("shiftover-remote-v1-phone-to-mac".utf8),
-                outputByteCount: 32))
+    init(transport: NoiseTransport) {
+        self.transport = transport
+    }
+
+    /// Unique to this session and identical on both ends. Usable as a channel
+    /// binding — e.g. to prove, inside the channel, which session a token
+    /// belongs to.
+    public var handshakeHash: Data { transport.handshakeHash }
+
+    /// Frames this side has sealed. A `0` means the peer has proven nothing
+    /// yet beyond being able to complete a handshake.
+    public var sentCount: UInt64 { transport.send.messageCount }
+    /// Frames this side has opened.
+    public var receivedCount: UInt64 { transport.receive.messageCount }
+
+    public func seal(_ plaintext: Data) throws -> Data {
+        try transport.send.encrypt(plaintext)
+    }
+
+    public func open(_ ciphertext: Data) throws -> Data {
+        try transport.receive.decrypt(ciphertext)
     }
 }
 
-/// Seals and opens frames for one direction, holding that direction's counter.
+/// Why a handshake could not complete.
 ///
-/// Not a value type on purpose — the counter must advance for the whole
-/// connection, and a copied struct would silently fork it into two sequences
-/// that both reuse nonces.
-public final class RemoteFrameCipher {
-    private let key: SymmetricKey
-    private var counter: UInt64 = 0
+/// Deliberately coarse on the Mac's side: every one of these ends in the same
+/// silent disconnect, because telling an unauthenticated peer *which* check
+/// failed tells a prober which half of its guess was right.
+public enum RemoteHandshakeError: Error, Equatable, Sendable {
+    /// The peer's version is outside our window. Carries the numbers so the
+    /// caller can say which side to update.
+    case incompatible(VersionCompatibility)
+    /// A Noise message would not open or was malformed — wrong key, tampering,
+    /// or not a Shiftover peer at all.
+    case cryptographic(NoiseError)
+    /// The sealed payload opened but is not a payload this build understands.
+    case malformedPayload
+    /// The code being redeemed was issued by a different Mac than the one
+    /// being dialled. A programming error on the phone, caught before any
+    /// bytes leave it.
+    case codeDoesNotMatchHost
+}
 
-    public init(key: SymmetricKey) {
-        self.key = key
+/// The Shiftover handshake on top of Noise IK. The desktop, Go and the probe all
+/// run this one implementation, so the three can never disagree about a byte.
+public enum RemoteHandshake {
+
+    /// Bound into the Noise handshake hash. Carries the cleartext version, which
+    /// is what makes editing that version in flight fail the handshake instead
+    /// of forcing a downgrade.
+    public static func prologue(protocolVersion: Int) -> Data {
+        Data("shiftover-remote/v\(protocolVersion)".utf8)
     }
 
-    /// Hard ceiling on frames per key. The nonce here is a 64-bit counter in a
-    /// 96-bit field, so wrapping is not a practical risk — but making
-    /// exhaustion an explicit, loud failure beats a silent wrap to zero, which
-    /// would be the worst outcome and the hardest to notice.
-    public static let maxFramesPerKey: UInt64 = .max - 1
+    // MARK: Phone
 
-    public enum CipherError: Error, Equatable {
-        case counterExhausted
-        case sealFailed
-        case openFailed
-    }
+    /// The phone's half: builds `Hello`, completes on `HelloAck`.
+    public final class Initiator {
+        private let noise: NoiseIKInitiator
+        private let macPublicKey: Data
 
-    /// Encrypts one frame. The returned bytes are `nonce || ciphertext || tag`
-    /// — ChaChaPoly's combined representation.
-    public func seal(_ plaintext: Data) throws -> Data {
-        guard counter < Self.maxFramesPerKey else { throw CipherError.counterExhausted }
-        let boxNonce = try Self.nonce(from: counter)
-        counter += 1
-
-        guard let sealed = try? ChaChaPoly.seal(plaintext, using: key, nonce: boxNonce) else {
-            throw CipherError.sealFailed
+        /// - Parameter macPublicKey: from the QR on first pairing, from the
+        ///   pairing store thereafter. Knowing it in advance is what makes this
+        ///   IK: the phone can encrypt its own identity to the Mac in the very
+        ///   first message.
+        public init(identity: RemoteIdentityKey, macPublicKey: Data) throws {
+            do {
+                noise = try NoiseIKInitiator(
+                    prologue: RemoteHandshake.prologue(protocolVersion: ProtocolVersion.current),
+                    staticKey: identity.privateKey,
+                    remoteStaticKey: macPublicKey)
+            } catch let error as NoiseError {
+                throw RemoteHandshakeError.cryptographic(error)
+            }
+            self.macPublicKey = macPublicKey
         }
-        return sealed.combined
+
+        /// Message 1. Pass `redeeming` on the first connection after scanning a
+        /// code; its proof is bound to THIS handshake, so it cannot be lifted
+        /// into another one.
+        public func hello(appVersion: String, deviceID: UUID, deviceName: String,
+                          redeeming code: RemotePairing.Code? = nil) throws -> Hello {
+            if let code, code.publicKey != macPublicKey {
+                throw RemoteHandshakeError.codeDoesNotMatchHost
+            }
+            do {
+                let message = try noise.writeMessage1 { handshakeHash in
+                    let identity = HelloIdentity(
+                        appVersion: appVersion,
+                        deviceID: deviceID,
+                        deviceName: deviceName,
+                        pairingID: code?.pairingID,
+                        pairingProof: code.map {
+                            RemotePairing.pairingProof(secret: $0.secret,
+                                                       pairingID: $0.pairingID,
+                                                       handshakeHash: handshakeHash)
+                        })
+                    return try JSONEncoder().encode(identity)
+                }
+                return Hello(handshake: message)
+            } catch let error as NoiseError {
+                throw RemoteHandshakeError.cryptographic(error)
+            }
+        }
+
+        /// Message 2. Returns what the Mac said about itself and the open channel.
+        public func finish(_ ack: HelloAck) throws -> (HelloAckPayload, RemoteChannel) {
+            let compatibility = ProtocolVersion.check(peerVersion: ack.protocolVersion)
+            guard compatibility.isCompatible else {
+                throw RemoteHandshakeError.incompatible(compatibility)
+            }
+            let payload: Data
+            let transport: NoiseTransport
+            do {
+                (payload, transport) = try noise.readMessage2(ack.handshake)
+            } catch let error as NoiseError {
+                throw RemoteHandshakeError.cryptographic(error)
+            }
+            guard let decoded = try? JSONDecoder().decode(HelloAckPayload.self, from: payload) else {
+                throw RemoteHandshakeError.malformedPayload
+            }
+            return (decoded, RemoteChannel(transport: transport))
+        }
     }
 
-    /// Decrypts one frame.
-    ///
-    /// The nonce travels in the combined blob rather than being re-derived from
-    /// a local counter, so an out-of-order or dropped frame does not
-    /// desynchronise the stream. Authenticity is what actually matters, and
-    /// ChaChaPoly's tag provides it — a forged or tampered frame fails to open
-    /// regardless of what nonce it claims.
-    public func open(_ combined: Data) throws -> Data {
-        guard let box = try? ChaChaPoly.SealedBox(combined: combined),
-              let plaintext = try? ChaChaPoly.open(box, using: key)
-        else { throw CipherError.openFailed }
-        return plaintext
+    // MARK: Mac
+
+    /// What the Mac learns from a `Hello`, before deciding whether to accept it.
+    public struct IncomingHello: Sendable {
+        /// The phone's long-term public key, **proven** by the handshake — the
+        /// payload only opens if the sender holds the private half. This, not
+        /// `identity.deviceID`, is what a returning device is looked up by.
+        public let phonePublicKey: Data
+        public let identity: HelloIdentity
+        /// What a pairing proof must have been computed over.
+        public let handshakeHash: Data
     }
 
-    /// Big-endian counter in the low 8 bytes of a 12-byte nonce.
-    private static func nonce(from counter: UInt64) throws -> ChaChaPoly.Nonce {
-        var bytes = Data(repeating: 0, count: 4)
-        bytes.append(contentsOf: withUnsafeBytes(of: counter.bigEndian) { Data($0) })
-        return try ChaChaPoly.Nonce(data: bytes)
+    /// The Mac's half: opens `Hello`, and — once the caller has decided the
+    /// device is welcome — answers with `HelloAck`.
+    public final class Responder {
+        private let noise: NoiseIKResponder
+
+        public init(identity: RemoteIdentityKey) {
+            noise = NoiseIKResponder(
+                prologue: RemoteHandshake.prologue(protocolVersion: ProtocolVersion.current),
+                staticKey: identity.privateKey)
+        }
+
+        /// Opens message 1. Check the version FIRST (`HandshakeVersionProbe`)
+        /// and refuse readably if it is out of range — this throws
+        /// `.incompatible` too, but by then a refusal is all that is left to do.
+        public func open(_ hello: Hello) throws -> IncomingHello {
+            let compatibility = ProtocolVersion.check(peerVersion: hello.protocolVersion)
+            guard compatibility.isCompatible else {
+                throw RemoteHandshakeError.incompatible(compatibility)
+            }
+            let first: NoiseIKFirstMessage
+            do {
+                first = try noise.readMessage1(hello.handshake)
+            } catch let error as NoiseError {
+                throw RemoteHandshakeError.cryptographic(error)
+            }
+            guard let identity = try? JSONDecoder().decode(HelloIdentity.self, from: first.payload) else {
+                throw RemoteHandshakeError.malformedPayload
+            }
+            return IncomingHello(phonePublicKey: first.remoteStaticKey,
+                                 identity: identity,
+                                 handshakeHash: first.handshakeHashBeforePayload)
+        }
+
+        /// Message 2. Only call once the device has been authorised.
+        public func accept(_ payload: HelloAckPayload) throws -> (HelloAck, RemoteChannel) {
+            do {
+                let (message, transport) = try noise.writeMessage2(
+                    payload: try JSONEncoder().encode(payload))
+                return (HelloAck(handshake: message), RemoteChannel(transport: transport))
+            } catch let error as NoiseError {
+                throw RemoteHandshakeError.cryptographic(error)
+            }
+        }
     }
 }
 
@@ -146,14 +240,4 @@ public struct RemoteIdentityKey {
 
     public var publicKeyData: Data { privateKey.publicKey.rawRepresentation }
     public var rawRepresentation: Data { privateKey.rawRepresentation }
-
-    /// Agrees with a peer's public key. `nil` for a malformed peer key rather
-    /// than throwing — a bad key arrives from the network and is an
-    /// untrusted-input condition, not a programming error.
-    public func sharedSecret(withPeerPublicKey data: Data) -> SharedSecret? {
-        guard let peer = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: data),
-              let secret = try? privateKey.sharedSecretFromKeyAgreement(with: peer)
-        else { return nil }
-        return secret
-    }
 }

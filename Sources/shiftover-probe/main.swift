@@ -23,7 +23,6 @@
 // Pairing state is kept in ./shiftover-probe-state.json — a throwaway, and
 // deliberately not in the user's Application Support.
 
-import CryptoKit
 import Foundation
 import ShiftoverProtocol
 
@@ -32,6 +31,9 @@ import ShiftoverProtocol
 struct ProbeState: Codable {
     var privateKey: Data
     var deviceID: UUID
+    /// The Mac's long-term key, from the QR. A returning connection cannot even
+    /// start without it — Noise IK encrypts the very first message to it.
+    var macPublicKey: Data
     var host: String
     var port: UInt16
 
@@ -63,14 +65,15 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
     private var task: URLSessionWebSocketTask?
     private var session: URLSession!
 
-    private let identity: Curve25519.KeyAgreement.PrivateKey
+    private let identity: RemoteIdentityKey
     private let deviceID: UUID
-    private var inbound: RemoteFrameCipherBox?
-    private var outbound: RemoteFrameCipherBox?
+    /// The session. `nil` until the handshake completes; every frame after it
+    /// is sealed and opened here.
+    private var channel: RemoteChannel?
 
     private let connected = DispatchSemaphore(value: 0)
 
-    init(identity: Curve25519.KeyAgreement.PrivateKey, deviceID: UUID) {
+    init(identity: RemoteIdentityKey, deviceID: UUID) {
         self.identity = identity
         self.deviceID = deviceID
         super.init()
@@ -78,9 +81,8 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
     }
 
     func connect(host: String, port: UInt16) throws {
-        // `ws://` — the desktop listener is still plaintext at the transport
-        // layer (TLS-PSK is deferred). Frames are sealed regardless, which is
-        // what this probe actually verifies.
+        // `ws://`, deliberately: the Noise handshake inside the channel is what
+        // secures it, on the LAN exactly as on the relay.
         guard let url = URL(string: "ws://\(host):\(port)") else {
             fail("bad host/port")
         }
@@ -137,47 +139,41 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
 
     /// Sends a sealed frame. Everything after the handshake goes through here.
     private func send<T: Encodable>(_ type: FrameType, _ value: T) throws {
-        guard let outbound else { fail("no session keys — handshake first") }
+        guard let channel else { fail("no session — handshake first") }
         let plaintext = try JSONEncoder().encode(value)
-        try sendRaw(Frame(type: type, payload: try outbound.seal(plaintext)))
+        try sendRaw(Frame(type: type, payload: try channel.seal(plaintext)))
     }
 
     private func receiveSealed(timeout: TimeInterval = 10) throws -> (FrameType, Data) {
-        guard let inbound else { fail("no session keys") }
+        guard let channel else { fail("no session") }
         let frame = try receiveRaw(timeout: timeout)
-        return (frame.type, try inbound.open(frame.payload))
+        return (frame.type, try channel.open(frame.payload))
     }
 
     // MARK: Handshake
 
-    /// Runs the handshake, optionally redeeming a pairing code.
-    func handshake(code: RemotePairing.Code?, deviceName: String) throws {
-        let nonce = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
-
-        var pairingID: String?
-        var tag: Data?
-        if let code {
-            pairingID = code.pairingID
-            // The MITM defence: bind BOTH public keys to the one-time secret.
-            tag = RemotePairing.authenticationTag(
-                secret: code.secret,
-                pairingID: code.pairingID,
-                macPublicKey: code.publicKey,
-                phonePublicKey: identity.publicKey.rawRepresentation)
+    /// Runs the handshake, optionally redeeming a pairing code. This is the
+    /// sequence Go's `RemoteClient` must follow, step for step.
+    func handshake(macPublicKey: Data, code: RemotePairing.Code?, deviceName: String) throws {
+        let initiator: RemoteHandshake.Initiator
+        do {
+            initiator = try RemoteHandshake.Initiator(identity: identity, macPublicKey: macPublicKey)
+        } catch {
+            fail("bad Mac key: \(error)")
         }
 
-        let hello = Hello(
-            appVersion: "probe",
-            deviceID: deviceID,
-            deviceName: deviceName,
-            publicKey: identity.publicKey.rawRepresentation,
-            sessionNonce: nonce,
-            pairingID: pairingID,
-            pairingTag: tag)
-
+        let hello = try initiator.hello(appVersion: "probe", deviceID: deviceID,
+                                        deviceName: deviceName, redeeming: code)
         try sendRaw(Frame(type: .hello, payload: try JSONEncoder().encode(hello)))
 
-        let reply = try receiveRaw()
+        let reply: Frame
+        do {
+            reply = try receiveRaw()
+        } catch {
+            // The Mac answers an unauthorised hello by closing — uniformly, so
+            // an unpaired prober learns only "no".
+            fail("the Mac closed the connection — unpaired, expired code, or wrong Mac (\(error))")
+        }
         guard reply.type == .helloAck else {
             // A version refusal arrives as an unsealed `.response`.
             if reply.type == .response,
@@ -189,24 +185,15 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
         }
 
         let ack = try JSONDecoder().decode(HelloAck.self, from: reply.payload)
-        ok("paired with \(ack.hostName) (Shiftover \(ack.appVersion))")
-        info("capabilities: \(ack.capabilities.map(\.rawValue).sorted().joined(separator: ", "))")
-
-        // Derive the same keys the Mac just derived.
-        guard let macKey = code?.publicKey ?? storedMacKey,
-              let peer = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macKey),
-              let shared = try? identity.sharedSecretFromKeyAgreement(with: peer)
-        else { fail("could not agree a session key") }
-
-        let keys = RemoteSessionKeys.derive(
-            sharedSecret: shared, macNonce: ack.sessionNonce, phoneNonce: nonce)
-        // The Mac seals with macToPhone; we open with it, and seal with the other.
-        inbound = RemoteFrameCipherBox(key: keys.macToPhone)
-        outbound = RemoteFrameCipherBox(key: keys.phoneToMac)
-        storedMacKey = macKey
+        do {
+            let (payload, channel) = try initiator.finish(ack)
+            self.channel = channel
+            ok("paired with \(payload.hostName) (Shiftover \(payload.appVersion))")
+            info("capabilities: \(payload.capabilities.map(\.rawValue).sorted().joined(separator: ", "))")
+        } catch {
+            fail("handshake failed: \(error)")
+        }
     }
-
-    var storedMacKey: Data?
 
     // MARK: RPC
 
@@ -329,26 +316,6 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
 /// failure.
 struct ProbeTimeout: Error {}
 
-/// Tiny wrapper so the probe can hold the cipher without importing the app.
-final class RemoteFrameCipherBox {
-    private let key: SymmetricKey
-    private var counter: UInt64 = 0
-
-    init(key: SymmetricKey) { self.key = key }
-
-    func seal(_ plaintext: Data) throws -> Data {
-        var bytes = Data(repeating: 0, count: 4)
-        bytes.append(contentsOf: withUnsafeBytes(of: counter.bigEndian) { Data($0) })
-        counter += 1
-        return try ChaChaPoly.seal(plaintext, using: key,
-                                   nonce: try ChaChaPoly.Nonce(data: bytes)).combined
-    }
-
-    func open(_ combined: Data) throws -> Data {
-        try ChaChaPoly.open(try ChaChaPoly.SealedBox(combined: combined), using: key)
-    }
-}
-
 // MARK: - Entry point
 
 let arguments = CommandLine.arguments
@@ -385,7 +352,7 @@ case "pair":
         fail("set SHIFTOVER_PORT (and optionally SHIFTOVER_HOST) — the listener uses a kernel-assigned port")
     }
 
-    let identity = Curve25519.KeyAgreement.PrivateKey()
+    let identity = RemoteIdentityKey()
     let deviceID = UUID()
     let probe = Probe(identity: identity, deviceID: deviceID)
 
@@ -394,10 +361,10 @@ case "pair":
     ok("socket open")
 
     step("Handshake")
-    try probe.handshake(code: code, deviceName: "shiftover-probe")
+    try probe.handshake(macPublicKey: code.publicKey, code: code, deviceName: "shiftover-probe")
 
     ProbeState(privateKey: identity.rawRepresentation, deviceID: deviceID,
-               host: host, port: port).save()
+               macPublicKey: code.publicKey, host: host, port: port).save()
     ok("saved pairing state to \(ProbeState.path.lastPathComponent)")
 
     step("Exercising the RPC surface")
@@ -425,8 +392,7 @@ case "connect":
     guard let state = ProbeState.load() else {
         fail("no saved pairing — run `pair` first")
     }
-    guard let identity = try? Curve25519.KeyAgreement.PrivateKey(
-        rawRepresentation: state.privateKey) else {
+    guard let identity = RemoteIdentityKey(rawRepresentation: state.privateKey) else {
         fail("saved key is corrupt")
     }
 
@@ -441,7 +407,7 @@ case "connect":
     step("Handshake (returning device — no pairing code)")
     // The Mac must recognise us by PUBLIC KEY alone. If this succeeds, the
     // return path works; if it refuses, pairing did not persist.
-    try probe.handshake(code: nil, deviceName: "shiftover-probe")
+    try probe.handshake(macPublicKey: state.macPublicKey, code: nil, deviceName: "shiftover-probe")
 
     step("Exercising the RPC surface")
     try probe.call(.listProjects, label: "listProjects")

@@ -2,93 +2,101 @@ import Foundation
 
 // MARK: - Handshake
 //
-// Exchanged before any other frame, over an already-authenticated transport.
-// This does NOT carry credentials: pairing is Mac-authoritative and happens
-// out of band (PLAN_45 D14 — the QR carries service name + cert SPKI hash + a
-// one-time secret; the Mac mints the device token). By the time a Hello is
-// sent, both ends already trust each other; the handshake only establishes
-// *what they can say to each other*.
+// The first two frames of every connection, LAN or relay. Each carries one
+// Noise IK handshake message (see `Noise.swift`), and each Noise message
+// carries a sealed payload:
 //
-// That separation is what lets the relay stay a dumb ciphertext pipe — it
-// authenticates for BILLING, never for TRUST (D5/D13).
+//     phone → Mac   .hello     { protocolVersion, handshake: e, es, s, ss, [HelloIdentity] }
+//     Mac → phone   .helloAck  { protocolVersion, handshake: e, ee, se, [HelloAckPayload] }
+//
+// **Only `protocolVersion` travels in the clear**, and only because a peer too
+// old or too new to share a handshake still has to be told which side to
+// update (D16). It is bound into the Noise prologue, so editing it in flight
+// fails the handshake rather than forcing a downgrade.
+//
+// Everything that identifies anyone — device name, device id, app versions,
+// both long-term keys, the Mac's host name — is inside the Noise payloads. On
+// the LAN that hides it from anyone on the network; on the relay path it hides
+// it from the relay, which authenticates for BILLING and never for TRUST
+// (D5/D13).
 
 public struct Hello: Codable, Sendable, Equatable {
-    /// Wire-protocol version (`ProtocolVersion.current`). The only field whose
-    /// meaning is load-bearing rather than diagnostic.
+    /// Wire-protocol version (`ProtocolVersion.current`).
     public let protocolVersion: Int
-    /// Marketing version of the sending build, e.g. "0.4.2". Diagnostics only —
-    /// never branch on this, branch on `protocolVersion`.
-    public let appVersion: String
-    /// Stable per-device identity. **Self-asserted — never trust it alone.**
-    public let deviceID: UUID
-    /// Human-readable, for the desktop's paired-device list. e.g. "Marko's iPhone"
-    public let deviceName: String
+    /// Noise IK message 1.
+    public let handshake: Data
 
-    /// The device's long-term X25519 public key (32 bytes).
-    ///
-    /// **This is the credential.** On a return connection the Mac finds the
-    /// paired device by matching this, so possession of the corresponding
-    /// private key is what authenticates — not `deviceID`, which any client can
-    /// simply claim.
-    public let publicKey: Data
-
-    /// Fresh 32-byte per-session value, feeding the HKDF salt alongside the
-    /// Mac's counterpart. Without it every session between a given pair would
-    /// reuse one key while the frame counters restarted from zero — which is
-    /// precisely the nonce reuse the per-direction key split exists to prevent.
-    public let sessionNonce: Data
-
-    /// Set ONLY on the first connection after scanning a QR — identifies which
-    /// displayed code is being redeemed. `nil` on every later connection.
-    public let pairingID: String?
-
-    /// HMAC over both public keys + `pairingID`, keyed by the QR's one-time
-    /// secret. This is what makes a man-in-the-middle fail: an attacker who
-    /// substitutes a public key cannot recompute the tag without the secret,
-    /// and the secret only ever appeared on the Mac's screen.
-    public let pairingTag: Data?
-
-    public init(protocolVersion: Int = ProtocolVersion.current,
-                appVersion: String,
-                deviceID: UUID,
-                deviceName: String,
-                publicKey: Data,
-                sessionNonce: Data,
-                pairingID: String? = nil,
-                pairingTag: Data? = nil) {
+    public init(protocolVersion: Int = ProtocolVersion.current, handshake: Data) {
         self.protocolVersion = protocolVersion
-        self.appVersion = appVersion
-        self.deviceID = deviceID
-        self.deviceName = deviceName
-        self.publicKey = publicKey
-        self.sessionNonce = sessionNonce
-        self.pairingID = pairingID
-        self.pairingTag = pairingTag
+        self.handshake = handshake
     }
 }
 
 public struct HelloAck: Codable, Sendable, Equatable {
     public let protocolVersion: Int
+    /// Noise IK message 2.
+    public let handshake: Data
+
+    public init(protocolVersion: Int = ProtocolVersion.current, handshake: Data) {
+        self.protocolVersion = protocolVersion
+        self.handshake = handshake
+    }
+}
+
+/// Reads only the version out of a `Hello`/`HelloAck`.
+///
+/// Decoding the full message is exactly what fails when the peer speaks a
+/// different version, so the version has to be readable on its own — that is
+/// what lets the refusal say *which side* to update instead of the connection
+/// silently dying (D16).
+public struct HandshakeVersionProbe: Decodable, Sendable {
+    public let protocolVersion: Int
+}
+
+/// The phone's identity, sealed inside Noise message 1.
+public struct HelloIdentity: Codable, Sendable, Equatable {
+    /// Marketing version of the sending build, e.g. "0.4.2". Diagnostics only —
+    /// never branch on this, branch on `protocolVersion`.
+    public let appVersion: String
+    /// Stable per-install id. A label for the device list — **not** the
+    /// credential. The credential is the Noise static key, which the handshake
+    /// proves possession of.
+    public let deviceID: UUID
+    /// Human-readable, for the desktop's paired-device list. e.g. "Marko's iPhone"
+    public let deviceName: String
+    /// Set ONLY on the first connection after scanning a QR — identifies which
+    /// displayed code is being redeemed.
+    public let pairingID: String?
+    /// `RemotePairing.pairingProof` — an HMAC, keyed by the QR's one-time
+    /// secret, over this handshake's hash. Proves the sender saw the code.
+    public let pairingProof: Data?
+
+    public init(appVersion: String, deviceID: UUID, deviceName: String,
+                pairingID: String? = nil, pairingProof: Data? = nil) {
+        self.appVersion = appVersion
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.pairingID = pairingID
+        self.pairingProof = pairingProof
+    }
+}
+
+/// The Mac's side, sealed inside Noise message 2.
+public struct HelloAckPayload: Codable, Sendable, Equatable {
     public let appVersion: String
     /// The Mac's name, shown in Go's host picker. e.g. "Markos-MacBook-Pro"
     public let hostName: String
-    /// What this desktop build will actually honour. Lets Go hide affordances
-    /// it knows the other end cannot serve, rather than surfacing a failure
-    /// after the user taps.
+    /// What this desktop build will actually honour *for this device*. Lets Go
+    /// hide affordances it knows the other end cannot serve, rather than
+    /// surfacing a failure after the user taps. Authenticated now that it rides
+    /// inside the handshake — v1 sent it in the clear, where anyone in the path
+    /// could edit it.
     public let capabilities: Set<Capability>
-    /// The Mac's half of the session-key salt. See `Hello.sessionNonce`.
-    public let sessionNonce: Data
 
-    public init(protocolVersion: Int = ProtocolVersion.current,
-                appVersion: String,
-                hostName: String,
-                capabilities: Set<Capability>,
-                sessionNonce: Data) {
-        self.protocolVersion = protocolVersion
+    public init(appVersion: String, hostName: String, capabilities: Set<Capability>) {
         self.appVersion = appVersion
         self.hostName = hostName
         self.capabilities = capabilities
-        self.sessionNonce = sessionNonce
     }
 }
 

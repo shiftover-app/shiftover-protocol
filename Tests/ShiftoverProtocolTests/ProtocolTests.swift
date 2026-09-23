@@ -142,52 +142,42 @@ final class CodableShapeTests: XCTestCase {
     }
 
     func testHandshakeRoundTrips() throws {
-        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "Marko's iPhone",
-                          publicKey: Data(repeating: 7, count: 32),
-                          sessionNonce: Data(repeating: 9, count: 32))
+        let hello = Hello(handshake: Data(repeating: 7, count: 96))
         XCTAssertEqual(try roundTrip(hello), hello)
-
-        let ack = HelloAck(appVersion: "0.4.2", hostName: "Markos-MacBook-Pro",
-                           capabilities: [.read, .write, .terminalStream],
-                           sessionNonce: Data(repeating: 3, count: 32))
+        let ack = HelloAck(handshake: Data(repeating: 3, count: 48))
         XCTAssertEqual(try roundTrip(ack), ack)
+
+        let identity = HelloIdentity(appVersion: "0.4.2", deviceID: UUID(),
+                                     deviceName: "Marko's iPhone",
+                                     pairingID: "abc123", pairingProof: Data(repeating: 4, count: 32))
+        XCTAssertEqual(try roundTrip(identity), identity)
+        let payload = HelloAckPayload(appVersion: "0.4.2", hostName: "Markos-MacBook-Pro",
+                                      capabilities: [.read, .write, .terminalStream])
+        XCTAssertEqual(try roundTrip(payload), payload)
     }
 
-    /// The pairing fields are present only on a first connection. A return
-    /// `Hello` omits them entirely and must still decode — otherwise every
+    /// The pairing fields are present only on a first connection. A returning
+    /// identity omits them entirely and must still decode — otherwise every
     /// reconnection after the initial QR scan would fail.
-    func testHelloWithoutPairingFieldsRoundTrips() throws {
-        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "iPhone",
-                          publicKey: Data(repeating: 1, count: 32),
-                          sessionNonce: Data(repeating: 2, count: 32))
-        let decoded = try roundTrip(hello)
+    func testIdentityWithoutPairingFieldsRoundTrips() throws {
+        let identity = HelloIdentity(appVersion: "0.4.2", deviceID: UUID(), deviceName: "iPhone")
+        let decoded = try roundTrip(identity)
         XCTAssertNil(decoded.pairingID)
-        XCTAssertNil(decoded.pairingTag)
-        XCTAssertEqual(decoded, hello)
+        XCTAssertNil(decoded.pairingProof)
     }
 
-    func testHelloCarriesPairingFieldsWhenRedeeming() throws {
-        let hello = Hello(appVersion: "0.4.2", deviceID: UUID(), deviceName: "iPhone",
-                          publicKey: Data(repeating: 1, count: 32),
-                          sessionNonce: Data(repeating: 2, count: 32),
-                          pairingID: "abc123", pairingTag: Data(repeating: 4, count: 32))
-        let decoded = try roundTrip(hello)
-        XCTAssertEqual(decoded.pairingID, "abc123")
-        XCTAssertEqual(decoded.pairingTag, Data(repeating: 4, count: 32))
-    }
-
-    /// An unknown capability from a NEWER desktop must degrade to `.unknown`
-    /// rather than failing the whole `HelloAck` — otherwise adding a capability
-    /// would break every older Go at the handshake.
-    func testUnknownCapabilityDegradesInsteadOfFailingTheHandshake() throws {
-        let json = """
-        {"protocolVersion":1,"appVersion":"9.9.9","hostName":"Mac",
-         "sessionNonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-         "capabilities":["read","teleportation"]}
+    /// A peer on a different version sends a `Hello` this build may not be able
+    /// to decode in full — v1's, for one. The version must still be readable,
+    /// or the refusal cannot say which side to update.
+    func testVersionIsReadableFromAHelloOfAnyShape() throws {
+        let v1 = """
+        {"protocolVersion":1,"appVersion":"0.1","deviceID":"\(UUID().uuidString)",
+         "deviceName":"iPhone","publicKey":"AAAA","sessionNonce":"AAAA"}
         """
-        let ack = try JSONDecoder().decode(HelloAck.self, from: Data(json.utf8))
-        XCTAssertTrue(ack.capabilities.contains(.read))
-        XCTAssertTrue(ack.capabilities.contains(.unknown))
+        XCTAssertNil(try? JSONDecoder().decode(Hello.self, from: Data(v1.utf8)))
+        let probe = try JSONDecoder().decode(HandshakeVersionProbe.self, from: Data(v1.utf8))
+        XCTAssertEqual(probe.protocolVersion, 1)
+        XCTAssertFalse(ProtocolVersion.check(peerVersion: probe.protocolVersion).isCompatible)
     }
 
     func testEveryRPCMethodRoundTrips() throws {

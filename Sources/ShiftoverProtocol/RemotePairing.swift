@@ -16,14 +16,19 @@
 // never witnesses pairing, never holds a pairing secret, and therefore
 // authenticates only for **billing** — never for **trust**.
 //
-// ── The one-time secret is doing real work ──────────────────────────────
+// ── What the QR's two secrets each defend ───────────────────────────────
 //
-// A bare X25519 exchange over an untrusted network is trivially
-// man-in-the-middled: an attacker substitutes their own public key for each
-// side and reads everything. The secret in the QR is what makes that fail — it
-// travels over a channel an attacker cannot reach (a screen, in the room), and
-// both public keys are bound to it by HMAC. An attacker who cannot produce that
-// tag cannot substitute a key.
+// The QR travels over a channel an attacker cannot reach — a screen, in the
+// room — and carries two things:
+//
+//   • The Mac's public key. The phone runs Noise IK against it, so nobody
+//     without the Mac's private key can answer — an impostor Mac cannot even
+//     read message 1. That is the defence against a man in the middle.
+//   • A one-time secret. The Mac would otherwise accept *any* phone that can
+//     run a handshake; the secret is what limits pairing to the phone that
+//     actually saw the screen. The phone proves it with an HMAC over the
+//     handshake hash (`pairingProof`), so the proof is bound to one handshake
+//     and cannot be lifted into another.
 
 import CryptoKit
 import Foundation
@@ -141,51 +146,43 @@ public enum RemotePairing {
                     secret: secret, expiresAt: now.addingTimeInterval(codeLifetime))
     }
 
-    // MARK: - Mutual authentication
+    // MARK: - Proving the code was seen
 
-    /// Binds both public keys to the one-time secret.
+    /// Proves possession of the code's one-time secret, bound to one handshake.
     ///
-    /// Using BOTH keys is what defeats the man-in-the-middle: an attacker who
-    /// substitutes either one changes the input, and cannot recompute the tag
-    /// without the secret — which only ever appeared on the Mac's screen.
+    /// Computed over the Noise handshake hash as it stands just before the
+    /// phone's payload is sealed. That hash covers the prologue, the Mac's key,
+    /// the phone's ephemeral key and its (encrypted) static key, so the proof is
+    /// unique to this handshake: replaying it into another — even between the
+    /// same two devices — does not verify.
     ///
-    /// The pairing id is included so a tag captured from one pairing cannot be
-    /// replayed into another.
-    public static func authenticationTag(
-        secret: Data,
-        pairingID: String,
-        macPublicKey: Data,
-        phonePublicKey: Data
-    ) -> Data {
+    /// The pairing id is included so a proof for one code cannot be presented
+    /// against another.
+    public static func pairingProof(secret: Data, pairingID: String, handshakeHash: Data) -> Data {
         Data(HMAC<SHA256>.authenticationCode(
-            for: message(pairingID, macPublicKey, phonePublicKey),
+            for: proofMessage(pairingID, handshakeHash),
             using: SymmetricKey(data: secret)))
     }
 
-    /// Verifies a tag in **constant time**.
+    /// Verifies a proof in **constant time**.
     ///
     /// `isValidAuthenticationCode` rather than `==` on `Data`: a byte-by-byte
-    /// comparison leaks, through timing, how much of the tag was correct, which
-    /// turns forgery into a per-byte search. The window is short and the attack
-    /// fiddly, but there is no reason to hand it over when the correct call is
-    /// the same length.
-    public static func verify(
-        tag: Data,
-        secret: Data,
-        pairingID: String,
-        macPublicKey: Data,
-        phonePublicKey: Data
-    ) -> Bool {
+    /// comparison leaks, through timing, how much of the proof was correct,
+    /// which turns forgery into a per-byte search.
+    public static func verifyPairingProof(_ proof: Data, secret: Data, pairingID: String,
+                                          handshakeHash: Data) -> Bool {
         HMAC<SHA256>.isValidAuthenticationCode(
-            tag,
-            authenticating: message(pairingID, macPublicKey, phonePublicKey),
+            proof,
+            authenticating: proofMessage(pairingID, handshakeHash),
             using: SymmetricKey(data: secret))
     }
 
-    private static func message(_ pairingID: String, _ mac: Data, _ phone: Data) -> Data {
-        var message = Data(pairingID.utf8)
-        message.append(mac)
-        message.append(phone)
+    private static func proofMessage(_ pairingID: String, _ handshakeHash: Data) -> Data {
+        // The hash is fixed-length and last, so the variable-length id before it
+        // cannot be shifted to make two different inputs collide.
+        var message = Data("shiftover-pair/v2".utf8)
+        message.append(Data(pairingID.utf8))
+        message.append(handshakeHash)
         return message
     }
 

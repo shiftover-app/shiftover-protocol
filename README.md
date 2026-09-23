@@ -26,7 +26,7 @@ boundary *is* the frame boundary.
 
 | Tag | Frame | Payload |
 |---|---|---|
-| `0x01` / `0x02` | `hello` / `helloAck` | JSON — version + capability negotiation |
+| `0x01` / `0x02` | `hello` / `helloAck` | JSON — cleartext `protocolVersion` + one Noise IK handshake message |
 | `0x10` / `0x11` | `request` / `response` | JSON — `RPCRequest` / `RPCResponse`, correlated by `id` |
 | `0x12` | `event` | JSON — `ServerEvent`, desktop→phone push |
 | `0x20` / `0x21` | `terminalData` / `terminalInput` | `[16B paneID][raw bytes]` |
@@ -34,6 +34,31 @@ boundary *is* the frame boundary.
 Terminal traffic stays **raw** rather than base64-in-JSON: it is the
 highest-volume payload on the channel by an order of magnitude, and base64 would
 inflate it ~33% on a metered cellular link. Overhead is a fixed 16 bytes.
+
+## Security
+
+Every connection — LAN or relay — opens with a
+[Noise](https://noiseprotocol.org/noise.html) handshake,
+**`Noise_IK_25519_ChaChaPoly_SHA256`**, with the phone as initiator (it knows the
+Mac's static key from the pairing QR). `Noise.swift` is checked byte for byte
+against the published cacophony test vector for that protocol name.
+
+- **Only `protocolVersion` is in the clear**, so an out-of-range peer can still be
+  told which side to update. It is bound into the Noise prologue, so editing it in
+  flight fails the handshake.
+- **Identity is sealed.** Device name, device id, app versions, both long-term
+  keys and the Mac's host name ride inside the handshake payloads — invisible to
+  the LAN and to the relay.
+- **Forward secrecy.** Session keys depend on ephemeral keys discarded after the
+  handshake.
+- **Replay-proof frames.** Transport nonces are implicit counters; a frame opens
+  only once, at the position it was sealed for.
+- **Pairing** proves the QR's one-time secret with an HMAC over the handshake
+  hash (`RemotePairing.pairingProof`), so a proof cannot be lifted into another
+  handshake.
+
+The transport underneath (`ws://` on the LAN, `wss://` to the relay) adds nothing
+the channel relies on.
 
 ## Compatibility rules
 
