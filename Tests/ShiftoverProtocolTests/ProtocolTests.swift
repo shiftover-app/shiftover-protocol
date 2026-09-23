@@ -262,3 +262,55 @@ final class DTOSemanticsTests: XCTestCase {
         XCTAssertEqual(summary(used: -5, limit: 100).contextFraction, 0)       // clamped
     }
 }
+
+final class RelayVocabularyTests: XCTestCase {
+
+    func testConnectURLAddsThePathAndRole() {
+        let route = RelayRoute(url: "wss://cloud.shiftover.app", token: RelayRoute.mintToken())
+        XCTAssertEqual(route.connectURL(role: .mac)?.absoluteString,
+                       "wss://cloud.shiftover.app/v1/connect?role=mac")
+        let local = RelayRoute(url: "ws://127.0.0.1:8787/", token: "t")
+        XCTAssertEqual(local.connectURL(role: .phone)?.absoluteString,
+                       "ws://127.0.0.1:8787/v1/connect?role=phone")
+    }
+
+    func testConnectURLRefusesNonWebSocketBases() {
+        for bad in ["https://cloud.shiftover.app", "cloud.shiftover.app", "", "wss://"] {
+            XCTAssertNil(RelayRoute(url: bad, token: "t").connectURL(role: .mac), bad)
+        }
+    }
+
+    func testTokensAreThirtyTwoRandomBytes() {
+        let tokens = (0..<100).map { _ in RelayRoute.mintToken() }
+        XCTAssertEqual(Set(tokens).count, 100)
+        for token in tokens {
+            XCTAssertEqual(RemotePairing.decodeBase64url(token)?.count, 32)
+            // The relay admits `^[A-Za-z0-9_-]{43,128}$`.
+            XCTAssertEqual(token.count, 43)
+            XCTAssertNil(token.rangeOfCharacter(from: CharacterSet(
+                charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_").inverted))
+        }
+    }
+
+    func testPresenceMatchesTheRelaysWords() {
+        // Mirrors cloud/src/session.ts. A drifted word is a notice both sides
+        // silently ignore.
+        XCTAssertEqual(RelayPresence.allCases.map(\.rawValue),
+                       ["mac-online", "mac-offline", "phone-online", "phone-offline"])
+    }
+
+    func testAckWithoutARelayStillDecodes() throws {
+        // A Mac with no relay configured — and every Mac before this field.
+        let json = #"{"appVersion":"1.0","hostName":"Mac","capabilities":["read"]}"#
+        let payload = try JSONDecoder().decode(HelloAckPayload.self, from: Data(json.utf8))
+        XCTAssertNil(payload.relay)
+    }
+
+    func testAckRelayRoundTrips() throws {
+        let payload = HelloAckPayload(appVersion: "1.0", hostName: "Mac", capabilities: [.read],
+                                      relay: RelayRoute(url: "wss://x.example", token: "abc"))
+        let decoded = try JSONDecoder().decode(HelloAckPayload.self,
+                                               from: JSONEncoder().encode(payload))
+        XCTAssertEqual(decoded, payload)
+    }
+}

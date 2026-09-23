@@ -92,11 +92,19 @@ public struct HelloAckPayload: Codable, Sendable, Equatable {
     /// inside the handshake — v1 sent it in the clear, where anyone in the path
     /// could edit it.
     public let capabilities: Set<Capability>
+    /// Where this phone can reach the Mac when it is not on the same network.
+    /// `nil` when the Mac has no relay configured. Delivered here — sealed, and
+    /// only ever to the paired device — because the token is what admits a
+    /// socket to the pairing's relay. Optional, so a phone that predates the
+    /// field simply ignores it (D16).
+    public let relay: RelayRoute?
 
-    public init(appVersion: String, hostName: String, capabilities: Set<Capability>) {
+    public init(appVersion: String, hostName: String, capabilities: Set<Capability>,
+                relay: RelayRoute? = nil) {
         self.appVersion = appVersion
         self.hostName = hostName
         self.capabilities = capabilities
+        self.relay = relay
     }
 }
 
