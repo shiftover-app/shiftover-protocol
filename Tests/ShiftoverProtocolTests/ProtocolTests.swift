@@ -274,6 +274,16 @@ final class RelayVocabularyTests: XCTestCase {
                        "ws://127.0.0.1:8787/v1/connect?role=phone")
     }
 
+    func testHTTPURLUsesTheSameHostOverHTTPS() {
+        XCTAssertEqual(RelayRoute(url: "wss://cloud.shiftover.app", token: "t")
+                        .httpURL(path: "/v1/push")?.absoluteString,
+                       "https://cloud.shiftover.app/v1/push")
+        XCTAssertEqual(RelayRoute(url: "ws://127.0.0.1:8787", token: "t")
+                        .httpURL(path: "/v1/device")?.absoluteString,
+                       "http://127.0.0.1:8787/v1/device")
+        XCTAssertNil(RelayRoute(url: "https://x", token: "t").httpURL(path: "/v1/push"))
+    }
+
     func testConnectURLRefusesNonWebSocketBases() {
         for bad in ["https://cloud.shiftover.app", "cloud.shiftover.app", "", "wss://"] {
             XCTAssertNil(RelayRoute(url: bad, token: "t").connectURL(role: .mac), bad)

@@ -41,6 +41,21 @@ public struct RelayRoute: Codable, Sendable, Equatable {
         case phone
     }
 
+    /// The relay's HTTP endpoint at `path` (e.g. `/v1/push`) — the same host
+    /// as the WebSocket, over `https` (or `http` for a local `ws://` relay).
+    public func httpURL(path: String) -> URL? {
+        guard var components = URLComponents(string: url),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "wss" || scheme == "ws",
+              components.host?.isEmpty == false
+        else { return nil }
+        components.scheme = scheme == "wss" ? "https" : "http"
+        let base = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = base + path
+        components.queryItems = nil
+        return components.url
+    }
+
     /// The WebSocket URL to dial for `role`, or `nil` if `url` is not a usable
     /// `ws://` / `wss://` base.
     public func connectURL(role: Role) -> URL? {
