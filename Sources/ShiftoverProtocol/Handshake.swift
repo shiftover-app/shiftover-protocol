@@ -118,6 +118,10 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case read
     /// Mutating verbs: reply, permission, merge, PR, enqueue.
     case write
+    /// Headless immediate task creation, independent of the desktop queue.
+    case taskKickoff
+    case terminalSnapshots
+    case reviewDetails
     /// Live pty streaming (`.terminalData` / `.terminalInput`).
     case terminalStream
     /// Desktop can request a push through Cloud on this device's behalf.

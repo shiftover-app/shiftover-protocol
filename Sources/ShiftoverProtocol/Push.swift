@@ -38,6 +38,10 @@ public struct PushContent: Codable, Sendable, Equatable {
         case error
     }
 
+    /// True only for a sealed background withdrawal, never an alert. Optional
+    /// for decoding pushes from older Macs. The transport flag alone is untrusted.
+    public let withdrawn: Bool?
+
     public let kind: Kind
     public let worktreeID: UUID
     /// e.g. "shiftover · feat/relay"
@@ -51,7 +55,8 @@ public struct PushContent: Codable, Sendable, Equatable {
     public let sentAt: Date
 
     public init(kind: Kind, worktreeID: UUID, title: String, subtitle: String?,
-                body: String, sentAt: Date = Date()) {
+                body: String, sentAt: Date = Date(), withdrawn: Bool? = nil) {
+        self.withdrawn = withdrawn
         self.kind = kind
         self.worktreeID = worktreeID
         self.title = title
@@ -102,7 +107,7 @@ public enum PushSealing {
         let trimmed = PushContent(kind: content.kind, worktreeID: content.worktreeID,
                                   title: content.title, subtitle: content.subtitle,
                                   body: truncated(content.body, maxBytes: maxBodyBytes),
-                                  sentAt: content.sentAt)
+                                  sentAt: content.sentAt, withdrawn: content.withdrawn)
         do {
             var sender = try HPKE.Sender(recipientKey: recipient, ciphersuite: ciphersuite,
                                          info: info, authenticatedBy: mac.privateKey)
@@ -130,7 +135,8 @@ public enum PushSealing {
                   let plaintext = try? recipient.open(sealed.ciphertext),
                   let content = try? JSONDecoder().decode(PushContent.self, from: plaintext)
             else { continue }
-            guard now.timeIntervalSince(content.sentAt) <= maxAge else { return nil }
+            guard now.timeIntervalSince(content.sentAt) <= maxAge,
+                  content.sentAt.timeIntervalSince(now) <= 60 else { return nil }
             return (content, macKey)
         }
         return nil

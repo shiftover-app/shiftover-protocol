@@ -48,6 +48,7 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case fleetSummary
     case reviewItems
     case monitorSummary(worktreeID: UUID)
+    case reviewDetails(worktreeID: UUID)
     case listPanes(worktreeID: UUID)
 
     // ── Conversations ────────────────────────────────────────────────────
@@ -142,6 +143,8 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     // ── Write: fleet ─────────────────────────────────────────────────────
     case enqueueTask(projectID: UUID, prompt: String,
                      agent: AgentKindDTO, baseBranch: String?)
+    /// Starts only this task immediately, leaving the existing queue paused.
+    case kickoffTask(projectID: UUID, prompt: String, agent: AgentKindDTO, baseBranch: String?)
     case approveAndMerge(worktreeID: UUID)
     case createPullRequest(worktreeID: UUID)
     case requestChanges(worktreeID: UUID, text: String)
@@ -154,6 +157,9 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// until the agent happens to emit something (D8).
     case attachTerminal(paneID: UUID)
     case detachTerminal(paneID: UUID)
+    /// One plain-text screen without subscribing to raw terminal output.
+    /// Returns `.ok` when unchanged since the previous snapshot on this session.
+    case terminalSnapshot(paneID: UUID)
 }
 
 extension RPCMethod {
@@ -168,13 +174,13 @@ extension RPCMethod {
     public var isWrite: Bool {
         switch self {
         case .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
-             .monitorSummary, .listPanes, .attachTerminal, .detachTerminal,
+             .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
              .listSlashCommands:
             return false
-        case .replyToAgent, .answerPermission, .enqueueTask, .approveAndMerge,
+        case .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -192,11 +198,13 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case fleetSummary(FleetSummaryDTO)
     case reviewItems([ReviewItemDTO])
     case monitorSummary(MonitorSummaryDTO?)
+    case reviewDetails(diff: String, commits: String, truncated: Bool)
     case conversations([ConversationDTO])
     case conversationMessages(ConversationMessagesDTO)
     case slashCommands([SlashCommandDTO])
     case panes([PaneDTO])
     case terminalAttached(TerminalAttachment)
+    case taskStarted(worktreeID: UUID)
     /// A mutating verb that succeeded and has nothing to return.
     case ok
     case failure(RPCError)

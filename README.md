@@ -91,3 +91,32 @@ If Go does not render or act on a field, it does not belong here.
 ```sh
 swift test
 ```
+
+## Optional remote-completion features
+
+The sealed hello advertises `taskKickoff`, `terminalSnapshots`, and `reviewDetails`. Clients hide
+those controls when absent; read/write permission remains a separate capability.
+
+- `kickoffTask(projectID, prompt, agent, baseBranch?)` is a write. It starts one
+  worktree/session immediately without resuming other queued tasks and returns
+  `taskStarted(worktreeID)`. It uses the desktop's existing headless task launcher.
+- `terminalSnapshot(paneID)` is read-only. It returns `terminalAttached`'s shape
+  (pane ID, geometry, plain-text backfill) without subscribing to live output.
+  Low-data clients first detach the live stream and poll no faster than 2 Hz.
+  An unchanged screen returns `ok` without repeating its text.
+- `reviewDetails(worktreeID)` is read-only and returns a bounded tracked diff
+  against the worktree base, recent commit text, and an explicit truncation flag.
+  Untracked files are excluded.
+- `PushContent.withdrawn` is an optional Boolean inside the authenticated HPKE
+  envelope; omission means an ordinary alert. A withdrawal carries its worktree
+  and cutoff in `sentAt`. Only matching Mac/worktree alerts at or before that
+  timestamp may be removed. An unsealed transport flag grants no authority.
+  The relay request's `background: true` selects APNs background type/priority 5
+  and `content-available: 1`; it contains no alert, sound or mutable-content.
+  Withdrawal collapse IDs use a separate `clear-` prefix so they cannot replace
+  a newer alert held by APNs. Delivery is best-effort.
+
+Pushes more than 15 minutes old or more than 60 seconds in the future are
+rejected. The future bound prevents clock-skewed messages extending replay life.
+The phone persists withdrawal cutoffs in its extension-shared keychain to
+neutralize an old alert that arrives after its withdrawal.
