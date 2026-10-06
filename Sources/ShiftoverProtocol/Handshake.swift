@@ -119,6 +119,7 @@ public enum Capability: String, Codable, Sendable, Hashable {
     /// Mutating verbs: reply, permission, merge, PR, enqueue.
     case write
     /// Headless immediate task creation, independent of the desktop queue.
+    case agentWorkspace
     case taskKickoff
     case terminalSnapshots
     case reviewDetails

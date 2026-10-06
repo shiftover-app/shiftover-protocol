@@ -43,6 +43,10 @@ public struct RPCResponse: Codable, Sendable, Equatable {
 public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
+    case workspace
+    case createAgentTab(worktreeID: UUID, agent: AgentKindDTO, prompt: String, requestID: UUID)
+    case agentPaneAction(paneID: UUID, sessionID: String?, action: AgentPaneAction)
+    case renameAgentTab(tabID: UUID, title: String)
     case listProjects
     case listWorktrees(projectID: UUID?)
     case fleetSummary
@@ -173,14 +177,14 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
              .listSlashCommands:
             return false
-        case .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -193,6 +197,8 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case workspace(WorkspaceDTO)
+    case agentTabCreated(tabID: UUID, paneID: UUID)
     case projects([ProjectDTO])
     case worktrees([WorktreeDTO])
     case fleetSummary(FleetSummaryDTO)

@@ -39,6 +39,7 @@ public struct ProjectDTO: Codable, Sendable, Hashable, Identifiable {
     /// Non-git (plain directory) projects hide git-only affordances in Go, the
     /// same way the desktop gates on `Project.isGit`.
     public let isGit: Bool
+    public var groupName: String? = nil
 
     public init(id: UUID, name: String, isGit: Bool) {
         self.id = id
@@ -193,6 +194,9 @@ public enum ConversationAgentDTO: String, Codable, Sendable, Equatable {
 
 /// One agent session, as a conversation.
 public struct ConversationDTO: Codable, Sendable, Hashable, Identifiable {
+    public var paneID: UUID? = nil
+    public var tabID: UUID? = nil
+    public var sessionID: String? = nil
     /// Stable, opaque, and **derived from the transcript's path** rather than
     /// minted per connection — so a phone that reconnects, or relaunches, still
     /// addresses the same conversation without the desktop keeping a registry
