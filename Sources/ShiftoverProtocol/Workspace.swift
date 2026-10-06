@@ -24,6 +24,17 @@ public struct AgentTabDTO: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// A question shown before a transcript exists. The opaque ID binds an answer
+/// to the exact prompt observed on the Mac; it is not a reusable approval.
+public struct AgentStartupPromptDTO: Codable, Sendable, Hashable {
+    public var id: String
+    public var directory: String
+    public var options: [String]
+    public init(id: String, directory: String, options: [String]) {
+        self.id = id; self.directory = directory; self.options = options
+    }
+}
+
 public struct AgentPaneDTO: Codable, Sendable, Hashable, Identifiable {
     public var id: UUID
     public var title: String
@@ -31,15 +42,18 @@ public struct AgentPaneDTO: Codable, Sendable, Hashable, Identifiable {
     public var status: AgentStatusDTO
     public var conversationID: UUID?
     public var sessionID: String?
+    public var startupPrompt: AgentStartupPromptDTO?
     public var isRunning: Bool
     public init(id: UUID, title: String, agent: AgentKindDTO, status: AgentStatusDTO,
-                conversationID: UUID?, sessionID: String?, isRunning: Bool) {
+                conversationID: UUID?, sessionID: String?, isRunning: Bool, startupPrompt: AgentStartupPromptDTO? = nil) {
+        self.startupPrompt = startupPrompt
         self.id = id; self.title = title; self.agent = agent; self.status = status
         self.conversationID = conversationID; self.sessionID = sessionID; self.isRunning = isRunning
     }
 }
 
 public enum AgentPaneAction: Codable, Sendable, Equatable {
+    case answerStartupPrompt(promptID: String, option: Int)
     case send(text: String)
     case interrupt
     case permission(allow: Bool)
