@@ -183,11 +183,13 @@ public struct MonitorSummaryDTO: Codable, Sendable, Hashable {
 public enum ConversationAgentDTO: String, Codable, Sendable, Equatable {
     case claude
     case codex
+    case gemini
 
     public var displayName: String {
         switch self {
         case .claude: return "Claude"
         case .codex:  return "Codex"
+        case .gemini: return "Antigravity"
         }
     }
 }
