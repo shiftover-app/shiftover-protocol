@@ -21,12 +21,24 @@ final class WorkspaceTests: XCTestCase {
             .agentPaneAction(paneID: UUID(), sessionID: "session-a", action: .send(text: "continue")),
             .agentPaneAction(paneID: UUID(), sessionID: "session-b", action: .interrupt),
             .agentPaneAction(paneID: UUID(), sessionID: "session-c", action: .permission(allow: false)),
+            .agentPaneAction(paneID: UUID(), sessionID: nil, action: .answerStartupPrompt(promptID: "question", option: 1)),
             .renameAgentTab(tabID: UUID(), title: "Fix tests")]
         for method in methods {
             XCTAssertTrue(method.isWrite)
             XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(method)), method)
         }
         XCTAssertFalse(RPCMethod.workspace.isWrite)
+    }
+
+    func testStartupQuestionAndLegacyPaneDecode() throws {
+        let prompt = AgentStartupPromptDTO(id: "question", directory: "/project", options: ["No, exit", "Yes, I trust this folder"])
+        var pane = AgentPaneDTO(id: UUID(), title: "Test", agent: .claude, status: .input,
+            conversationID: nil, sessionID: nil, isRunning: true, startupPrompt: prompt)
+        XCTAssertEqual(try JSONDecoder().decode(AgentPaneDTO.self, from: JSONEncoder().encode(pane)), pane)
+        pane.startupPrompt = nil
+        let legacy = try JSONEncoder().encode(pane)
+        XCTAssertFalse(String(decoding: legacy, as: UTF8.self).contains("startupPrompt"))
+        XCTAssertNil(try JSONDecoder().decode(AgentPaneDTO.self, from: legacy).startupPrompt)
     }
 
     func testOlderProjectStillDecodes() throws {
