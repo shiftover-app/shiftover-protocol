@@ -124,6 +124,7 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case gitWorkspace
     case gitWorkspaceWrites
     case workspaceFiles
+    case shellCommands
     case terminalCreation
     case taskKickoff
     case terminalSnapshots

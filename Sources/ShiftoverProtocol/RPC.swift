@@ -180,6 +180,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// One plain-text screen without subscribing to raw terminal output.
     /// Returns `.ok` when unchanged since the previous snapshot on this session.
     case terminalSnapshot(paneID: UUID)
+    /// Structured, prompt-free command/output history for a known shell pane.
+    case shellSnapshot(paneID: UUID)
+    /// Submit only at the exact empty prompt that the phone last observed.
+    /// A prompt ID is consumed once, so retries never execute a command twice.
+    case submitShellCommand(paneID: UUID, promptID: UUID, command: String)
 }
 
 extension RPCMethod {
@@ -194,13 +199,13 @@ extension RPCMethod {
     public var isWrite: Bool {
         switch self {
         case .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
-             .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
+             .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
              .listSlashCommands, .listWorktreeFiles:
             return false
-        case .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -213,6 +218,7 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case shellSnapshot(ShellSnapshotDTO)
     case notificationPresence(NotificationPresenceDTO)
     case workspace(WorkspaceDTO)
     case terminalTabCreated(tabID: UUID, paneID: UUID)
