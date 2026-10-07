@@ -122,7 +122,29 @@ public struct WorkspaceFileContent: Codable, Sendable, Equatable {
     public let text: String
     public let isBinary: Bool
     public let truncated: Bool
-    public init(text: String, isBinary: Bool = false, truncated: Bool = false) {
+    /// Additive: older phones still see a binary file; older hosts omit these fields.
+    public let image: WorkspaceImagePreview?
+    public let previewNote: String?
+    public init(text: String, isBinary: Bool = false, truncated: Bool = false,
+                image: WorkspaceImagePreview? = nil, previewNote: String? = nil) {
         self.text = text; self.isBinary = isBinary; self.truncated = truncated
+        self.image = image; self.previewNote = previewNote
+    }
+}
+
+/// A metadata-free raster preview, bounded to 512 KiB and a 2,048-pixel longest edge.
+/// Animated inputs show their first frame. Source bytes never leave the Mac.
+public struct WorkspaceImagePreview: Codable, Sendable, Equatable {
+    public let data: Data
+    public let mediaType: String
+    public let width: Int
+    public let height: Int
+    public let originalWidth: Int
+    public let originalHeight: Int
+    public let isAnimated: Bool
+    public init(data: Data, mediaType: String, width: Int, height: Int,
+                originalWidth: Int, originalHeight: Int, isAnimated: Bool = false) {
+        self.data = data; self.mediaType = mediaType; self.width = width; self.height = height
+        self.originalWidth = originalWidth; self.originalHeight = originalHeight; self.isAnimated = isAnimated
     }
 }

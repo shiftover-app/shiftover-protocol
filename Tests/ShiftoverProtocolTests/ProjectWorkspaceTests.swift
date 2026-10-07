@@ -2,6 +2,19 @@ import XCTest
 @testable import ShiftoverProtocol
 
 final class ProjectWorkspaceTests: XCTestCase {
+    func testImagePreviewCompatibilityAndRoundTrip() throws {
+        let old = Data(#"{"text":"old","isBinary":false,"truncated":false}"#.utf8)
+        let decoded = try JSONDecoder().decode(WorkspaceFileContent.self, from: old)
+        XCTAssertNil(decoded.image); XCTAssertNil(decoded.previewNote)
+        let image = WorkspaceImagePreview(data: Data([0, 1, 2]), mediaType: "image/png",
+            width: 32, height: 24, originalWidth: 64, originalHeight: 48, isAnimated: true)
+        let content = WorkspaceFileContent(text: "", isBinary: true, image: image)
+        XCTAssertEqual(try JSONDecoder().decode(WorkspaceFileContent.self, from: JSONEncoder().encode(content)), content)
+        struct Legacy: Decodable { let text: String; let isBinary: Bool; let truncated: Bool }
+        XCTAssertTrue(try JSONDecoder().decode(Legacy.self, from: JSONEncoder().encode(content)).isBinary)
+        XCTAssertFalse(RPCMethod.readWorkspaceFile(worktreeID: UUID(), path: "photo.png").isWrite)
+    }
+
     func testLegacyWorkspaceStillDecodesAndNewPanesRoundTrip() throws {
         let legacy = WorkspaceDTO(projects: [], worktrees: [], tabs: [], availableAgents: [])
         XCTAssertNil(try JSONDecoder().decode(WorkspaceDTO.self, from: JSONEncoder().encode(legacy)).allTabs)
