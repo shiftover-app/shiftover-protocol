@@ -44,6 +44,7 @@ public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
     case workspace
+    case agentInsights(worktreeID: UUID)
     case createTerminalTab(worktreeID: UUID, requestID: UUID)
     case gitMutate(worktreeID: UUID, action: WorkspaceGitAction, expectedRevision: String, requestID: UUID)
     /// Empty path lists the worktree root. Paths are worktree-relative.
@@ -205,7 +206,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -242,6 +243,7 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case worktrees([WorktreeDTO])
     case fleetSummary(FleetSummaryDTO)
     case reviewItems([ReviewItemDTO])
+    case agentInsights(AgentInsightsDTO)
     case monitorSummary(MonitorSummaryDTO?)
     case reviewDetails(diff: String, commits: String, truncated: Bool)
     case conversations([ConversationDTO])
