@@ -46,7 +46,10 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case workspace
     /// Reads/updates ONLY the authenticated phone's notification delivery.
     /// RSSI is a hint, never an authorization credential. nil clears stale proximity.
-    case notificationPresence(mode: PhoneNotificationMode?, rssi: Int?)
+    /// A sample ID identifies an actual radio observation. Repeated polls must
+    /// not refresh an old observation or count it toward a sustained transition.
+    /// Optional for compatibility with the first presence-capable phone build.
+    case notificationPresence(mode: PhoneNotificationMode?, rssi: Int?, sampleID: UUID? = nil)
     case createAgentTab(worktreeID: UUID, agent: AgentKindDTO, prompt: String, requestID: UUID)
     case agentPaneAction(paneID: UUID, sessionID: String?, action: AgentPaneAction)
     case renameAgentTab(tabID: UUID, title: String)

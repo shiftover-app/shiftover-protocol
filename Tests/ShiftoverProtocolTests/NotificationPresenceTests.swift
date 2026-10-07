@@ -10,6 +10,14 @@ final class NotificationPresenceTests: XCTestCase {
             source: .bluetooth, bluetoothServiceID: UUID()))
         XCTAssertEqual(try JSONDecoder().decode(RPCResult.self, from: JSONEncoder().encode(result)), result)
     }
+    func testRadioSampleIdentityAndOlderPayloads() throws {
+        let method = RPCMethod.notificationPresence(mode: nil, rssi: -59, sampleID: UUID())
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(method)), method)
+        let old = Data(#"{"notificationPresence":{"rssi":-59}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: old),
+                       .notificationPresence(mode: nil, rssi: -59))
+    }
+
     func testManualOverridesAndAutomaticDelivery() {
         for away in [false, true] {
             XCTAssertTrue(NotificationPresenceDTO(mode: .always, isAway: away, source: .macActivity).notificationsEnabled)
