@@ -120,6 +120,8 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case write
     /// Headless immediate task creation, independent of the desktop queue.
     case agentWorkspace
+    case projectWorkspace
+    case gitWorkspace
     case taskKickoff
     case terminalSnapshots
     case reviewDetails

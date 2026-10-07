@@ -44,6 +44,8 @@ public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
     case workspace
+    case gitSnapshot(worktreeID: UUID)
+    case gitFileDiff(worktreeID: UUID, path: String, scope: GitDiffScope)
     /// Reads/updates ONLY the authenticated phone's notification delivery.
     /// RSSI is a hint, never an authorization credential. nil clears stale proximity.
     /// A sample ID identifies an actual radio observation. Repeated polls must
@@ -186,7 +188,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -208,6 +210,8 @@ extension RPCMethod {
 public enum RPCResult: Codable, Sendable, Equatable {
     case notificationPresence(NotificationPresenceDTO)
     case workspace(WorkspaceDTO)
+    case gitSnapshot(GitSnapshotDTO)
+    case gitFileDiff(GitFileDiffDTO)
     case agentTabCreated(tabID: UUID, paneID: UUID)
     case projects([ProjectDTO])
     case worktrees([WorktreeDTO])

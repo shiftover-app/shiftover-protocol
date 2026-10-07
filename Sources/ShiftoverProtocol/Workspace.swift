@@ -7,7 +7,10 @@ public struct WorkspaceDTO: Codable, Sendable, Equatable {
     public var tabs: [AgentTabDTO]
     public var conversations: [ConversationDTO]
     public var availableAgents: [AgentKindDTO]
-    public init(projects: [ProjectDTO], worktrees: [WorktreeDTO], tabs: [AgentTabDTO], conversations: [ConversationDTO] = [], availableAgents: [AgentKindDTO]) {
+    /// All desktop tabs, including non-agent panes. Absent on older hosts.
+    public var allTabs: [WorkspaceTabDTO]?
+    public init(projects: [ProjectDTO], worktrees: [WorktreeDTO], tabs: [AgentTabDTO], conversations: [ConversationDTO] = [], availableAgents: [AgentKindDTO], allTabs: [WorkspaceTabDTO]? = nil) {
+        self.allTabs = allTabs
         self.conversations = conversations
         self.projects = projects; self.worktrees = worktrees; self.tabs = tabs; self.availableAgents = availableAgents
     }
