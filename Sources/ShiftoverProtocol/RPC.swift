@@ -49,6 +49,13 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// Empty path lists the worktree root. Paths are worktree-relative.
     case browseDirectory(worktreeID: UUID, path: String)
     case readWorkspaceFile(worktreeID: UUID, path: String)
+    case gitBranches(worktreeID: UUID)
+    /// Compares HEAD's changes since the merge base with an exact branch ref.
+    case gitCompare(worktreeID: UUID, baseRef: String)
+    case gitCommitDetails(worktreeID: UUID, hash: String)
+    /// Immutable commit IDs keep file previews stable while branches move.
+    /// A nil base is reserved for a root commit.
+    case gitRevisionDiff(worktreeID: UUID, baseHash: String?, headHash: String, path: String)
     case gitSnapshot(worktreeID: UUID)
     case gitFileDiff(worktreeID: UUID, path: String, scope: GitDiffScope)
     /// Reads/updates ONLY the authenticated phone's notification delivery.
@@ -198,7 +205,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -218,6 +225,9 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case gitBranches(GitBranchesDTO)
+    case gitComparison(GitComparisonDTO)
+    case gitCommitDetails(GitCommitDetailsDTO)
     case shellSnapshot(ShellSnapshotDTO)
     case notificationPresence(NotificationPresenceDTO)
     case workspace(WorkspaceDTO)
