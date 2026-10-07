@@ -2,6 +2,14 @@ import XCTest
 @testable import ShiftoverProtocol
 
 final class RemoteCompletionTests: XCTestCase {
+    func testWorktreeFileSuggestionsAreReadOnlyAndRoundTrip() throws {
+        let method = RPCMethod.listWorktreeFiles(worktreeID: UUID(), query: "Sources/App")
+        XCTAssertFalse(method.isWrite)
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(method)), method)
+        let result = RPCResult.worktreeFiles(["Sources/App.swift", "Docs/My Notes.md"])
+        XCTAssertEqual(try JSONDecoder().decode(RPCResult.self, from: JSONEncoder().encode(result)), result)
+    }
+
     func testTaskStartRoundTripsAndRequiresWrite() throws {
         let method = RPCMethod.kickoffTask(projectID: UUID(), prompt: "Fix tests", agent: .codex, baseBranch: nil)
         XCTAssertTrue(method.isWrite)

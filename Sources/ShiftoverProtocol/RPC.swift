@@ -90,6 +90,9 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// the filesystem and the answer changes while a phone is connected: a
     /// command authored mid-session has to be reachable without reconnecting.
     case listSlashCommands(worktreeID: UUID, agent: ConversationAgentDTO)
+    /// Worktree-relative file suggestions. The Mac bounds and ranks results;
+    /// callers supply an existing worktree ID, never an arbitrary directory.
+    case listWorktreeFiles(worktreeID: UUID, query: String)
 
     // ── Write: unblock an agent ──────────────────────────────────────────
     /// → `AppState.replyToAgent`
@@ -182,7 +185,7 @@ extension RPCMethod {
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
-             .listSlashCommands:
+             .listSlashCommands, .listWorktreeFiles:
             return false
         case .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
@@ -208,6 +211,7 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case conversations([ConversationDTO])
     case conversationMessages(ConversationMessagesDTO)
     case slashCommands([SlashCommandDTO])
+    case worktreeFiles([String])
     case panes([PaneDTO])
     case terminalAttached(TerminalAttachment)
     case taskStarted(worktreeID: UUID)
