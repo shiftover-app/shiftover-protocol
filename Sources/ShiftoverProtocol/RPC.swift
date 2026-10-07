@@ -44,6 +44,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
     case workspace
+    case createTerminalTab(worktreeID: UUID, requestID: UUID)
+    case gitMutate(worktreeID: UUID, action: WorkspaceGitAction, expectedRevision: String, requestID: UUID)
+    /// Empty path lists the worktree root. Paths are worktree-relative.
+    case browseDirectory(worktreeID: UUID, path: String)
+    case readWorkspaceFile(worktreeID: UUID, path: String)
     case gitSnapshot(worktreeID: UUID)
     case gitFileDiff(worktreeID: UUID, path: String, scope: GitDiffScope)
     /// Reads/updates ONLY the authenticated phone's notification delivery.
@@ -188,14 +193,14 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
              .listSlashCommands, .listWorktreeFiles:
             return false
-        case .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -210,6 +215,10 @@ extension RPCMethod {
 public enum RPCResult: Codable, Sendable, Equatable {
     case notificationPresence(NotificationPresenceDTO)
     case workspace(WorkspaceDTO)
+    case terminalTabCreated(tabID: UUID, paneID: UUID)
+    case gitMutationCompleted(message: String)
+    case directory(WorkspaceDirectory)
+    case workspaceFile(WorkspaceFileContent)
     case gitSnapshot(GitSnapshotDTO)
     case gitFileDiff(GitFileDiffDTO)
     case agentTabCreated(tabID: UUID, paneID: UUID)

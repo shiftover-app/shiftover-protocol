@@ -69,10 +69,14 @@ public struct GitSnapshotDTO: Codable, Sendable, Equatable {
     public let commits: [GitCommitDTO]
     /// A bounded status list must never masquerade as a complete clean tree.
     public let truncated: Bool
+    /// Opaque content revision; absent when the tree cannot be checked safely.
+    public let revision: String?
+    public let mutationUnavailableReason: String?
     public let capturedAt: Date
-    public init(branch: String?, upstream: String?, ahead: Int?, behind: Int?, files: [GitFileStatusDTO], commits: [GitCommitDTO], truncated: Bool = false, capturedAt: Date = Date()) {
+    public init(branch: String?, upstream: String?, ahead: Int?, behind: Int?, files: [GitFileStatusDTO], commits: [GitCommitDTO], truncated: Bool = false, capturedAt: Date = Date(), revision: String? = nil, mutationUnavailableReason: String? = nil) {
         self.branch = branch; self.upstream = upstream; self.ahead = ahead; self.behind = behind
         self.files = files; self.commits = commits; self.truncated = truncated; self.capturedAt = capturedAt
+        self.revision = revision; self.mutationUnavailableReason = mutationUnavailableReason
     }
 }
 
@@ -82,5 +86,43 @@ public struct GitFileDiffDTO: Codable, Sendable, Equatable {
     public let isBinary: Bool
     public init(text: String, truncated: Bool = false, isBinary: Bool = false) {
         self.text = text; self.truncated = truncated; self.isBinary = isBinary
+    }
+}
+
+
+/// Each action operates on the state explicitly reviewed by the caller.
+public enum WorkspaceGitAction: Codable, Sendable, Equatable {
+    case stage(path: String)
+    case unstage(path: String)
+    case commit(message: String)
+    case push
+    case pull
+}
+
+public struct WorkspaceFileEntry: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { path }
+    public let path: String
+    /// Unknown kinds stay visible, but cannot be opened by older clients.
+    public let kind: String
+    public let size: Int64
+    public init(path: String, kind: String, size: Int64 = 0) {
+        self.path = path; self.kind = kind; self.size = size
+    }
+}
+
+public struct WorkspaceDirectory: Codable, Sendable, Equatable {
+    public let entries: [WorkspaceFileEntry]
+    public let truncated: Bool
+    public init(entries: [WorkspaceFileEntry], truncated: Bool = false) {
+        self.entries = entries; self.truncated = truncated
+    }
+}
+
+public struct WorkspaceFileContent: Codable, Sendable, Equatable {
+    public let text: String
+    public let isBinary: Bool
+    public let truncated: Bool
+    public init(text: String, isBinary: Bool = false, truncated: Bool = false) {
+        self.text = text; self.isBinary = isBinary; self.truncated = truncated
     }
 }
