@@ -11,6 +11,13 @@ final class AgentInsightsTests: XCTestCase {
         let result = RPCResult.agentInsights(dto)
         XCTAssertEqual(try JSONDecoder().decode(RPCResult.self, from: JSONEncoder().encode(result)), result)
     }
+    func testProviderUsageDoesNotRequireAProject() throws {
+        let method = RPCMethod.providerUsage
+        XCTAssertFalse(method.isWrite)
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(method)), method)
+        let result = RPCResult.providerUsage([.init(id: "codex", name: "Codex", state: "loading")])
+        XCTAssertEqual(try JSONDecoder().decode(RPCResult.self, from: JSONEncoder().encode(result)), result)
+    }
     func testMissingMetricsRemainUnknown() throws {
         let data = Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"sessionID\":\"unknown\"}".utf8)
         let dto = try JSONDecoder().decode(AgentSessionInsightDTO.self, from: data)
