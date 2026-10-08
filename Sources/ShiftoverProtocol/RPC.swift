@@ -44,6 +44,8 @@ public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
     case workspace
+    case agentQuestions(paneID: UUID)
+    case answerAgentQuestion(paneID: UUID, answer: AgentQuestionAnswer, requestID: UUID)
     case agentInsights(worktreeID: UUID)
     case providerUsage
     case createTerminalTab(worktreeID: UUID, requestID: UUID)
@@ -207,14 +209,14 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
              .listSlashCommands, .listWorktreeFiles:
             return false
-        case .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -227,6 +229,7 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case agentQuestions(AgentQuestionsDTO)
     case gitBranches(GitBranchesDTO)
     case gitComparison(GitComparisonDTO)
     case gitCommitDetails(GitCommitDetailsDTO)
