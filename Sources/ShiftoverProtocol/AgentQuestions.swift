@@ -10,10 +10,14 @@ public struct AgentQuestionDTO: Codable, Sendable, Equatable, Identifiable {
     public var multiple: Bool
     public var allowsText: Bool
     public var isSecret: Bool
+    /// The agent's short label for the question ("Purchases"), for step
+    /// navigation. Codex and OpenCode both require one; optional so hosts
+    /// that predate it still decode.
+    public var header: String?
     public init(id: String, title: String, options: [String] = [], descriptions: [String] = [],
-                multiple: Bool = false, allowsText: Bool = true, isSecret: Bool = false) {
+                multiple: Bool = false, allowsText: Bool = true, isSecret: Bool = false, header: String? = nil) {
         self.id = id; self.title = title; self.options = options; self.descriptions = descriptions
-        self.multiple = multiple; self.allowsText = allowsText; self.isSecret = isSecret
+        self.multiple = multiple; self.allowsText = allowsText; self.isSecret = isSecret; self.header = header
     }
 }
 

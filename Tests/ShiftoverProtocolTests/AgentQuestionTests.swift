@@ -23,4 +23,13 @@ final class AgentQuestionTests: XCTestCase {
         XCTAssertFalse(snapshot.isEmpty)
         XCTAssertTrue(AgentQuestionsDTO().isEmpty)
     }
+    func testHeaderIsOptionalOnTheWire() throws {
+        let labelled = AgentQuestionDTO(id: "one", title: "How should purchases work?", options: ["A"], header: "Purchases")
+        XCTAssertEqual(try JSONDecoder().decode(AgentQuestionDTO.self, from: JSONEncoder().encode(labelled)), labelled)
+        // A host that predates the field sends none.
+        let old = #"{"id":"one","title":"Pick","options":["A"],"descriptions":[""],"multiple":false,"allowsText":true,"isSecret":false}"#
+        let decoded = try JSONDecoder().decode(AgentQuestionDTO.self, from: Data(old.utf8))
+        XCTAssertNil(decoded.header)
+        XCTAssertEqual(decoded.title, "Pick")
+    }
 }
