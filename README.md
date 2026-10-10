@@ -118,5 +118,12 @@ those controls when absent; read/write permission remains a separate capability.
 
 Pushes more than 15 minutes old or more than 60 seconds in the future are
 rejected. The future bound prevents clock-skewed messages extending replay life.
+
+An Allow / Deny given on a notification carries that push's `sentAt` as
+`answerPermission(questionSentAt:)`. Allow presses a key in whatever prompt is
+showing now, so the desktop refuses an answer when it has pushed a newer
+question for that worktree since — a push the relay held back or replayed
+cannot approve a different prompt. Answers from the app's own screens send
+`nil`; they show the live prompt.
 The phone persists withdrawal cutoffs in its extension-shared keychain to
 neutralize an old alert that arrives after its withdrawal.

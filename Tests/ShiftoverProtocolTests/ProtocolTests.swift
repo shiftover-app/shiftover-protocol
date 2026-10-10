@@ -191,6 +191,8 @@ final class CodableShapeTests: XCTestCase {
             .listPanes(worktreeID: UUID()),
             .replyToAgent(worktreeID: UUID(), text: "keep going"),
             .answerPermission(worktreeID: UUID(), allow: true),
+            .answerPermission(worktreeID: UUID(), allow: false,
+                              questionSentAt: Date(timeIntervalSince1970: 1_800_000_000.25)),
             .enqueueTask(projectID: UUID(), prompt: "fix the flake",
                          agent: .claude, baseBranch: "main"),
             .approveAndMerge(worktreeID: UUID()),
@@ -202,6 +204,24 @@ final class CodableShapeTests: XCTestCase {
         for method in methods {
             XCTAssertEqual(try roundTrip(RPCRequest(method: method)).method, method)
         }
+    }
+
+    /// Version skew both ways: an older phone sends no question timestamp, an
+    /// older Mac must ignore one it does not know.
+    func testAnswerPermissionQuestionTimestampIsOptionalOnTheWire() throws {
+        let id = UUID()
+        let old = #"{"answerPermission":{"worktreeID":"\#(id.uuidString)","allow":true}}"#
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: Data(old.utf8)),
+                       .answerPermission(worktreeID: id, allow: true, questionSentAt: nil))
+
+        struct OldAnswer: Decodable { let worktreeID: UUID; let allow: Bool }
+        struct OldMethod: Decodable { let answerPermission: OldAnswer }
+        let sentAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let new = try JSONEncoder().encode(
+            RPCMethod.answerPermission(worktreeID: id, allow: false, questionSentAt: sentAt))
+        let decodedByOld = try JSONDecoder().decode(OldMethod.self, from: new)
+        XCTAssertEqual(decodedByOld.answerPermission.worktreeID, id)
+        XCTAssertFalse(decodedByOld.answerPermission.allow)
     }
 
     func testRPCResultsRoundTrip() throws {

@@ -102,6 +102,8 @@ public enum WorkspaceGitAction: Codable, Sendable, Equatable {
 public struct WorkspaceFileEntry: Codable, Sendable, Equatable, Identifiable {
     public var id: String { path }
     public let path: String
+    /// `directory`, `file`, `symlink`, `unsupported` or `secret` (a credential
+    /// by convention — `.env`, a private key — whose contents stay on the Mac).
     /// Unknown kinds stay visible, but cannot be opened by older clients.
     public let kind: String
     public let size: Int64

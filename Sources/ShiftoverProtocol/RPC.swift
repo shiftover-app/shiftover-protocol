@@ -124,7 +124,14 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// → `AppState.answerAgentPermission`. Note the desktop only claims a
     /// permission contract for Claude Code; other agents focus instead of
     /// pressing an unverified key, and will answer `.unsupportedForAgent`.
-    case answerPermission(worktreeID: UUID, allow: Bool)
+    ///
+    /// `questionSentAt` is the `PushContent.sentAt` of the notification the
+    /// answer was given on. Allow presses a key in whatever prompt is showing
+    /// *now*, so an answer to an older question — a push the relay held back
+    /// or replayed — must not land on a newer one. The desktop refuses it when
+    /// it has pushed a newer question for the worktree since. `nil` from the
+    /// app's own screens, which show the live prompt.
+    case answerPermission(worktreeID: UUID, allow: Bool, questionSentAt: Date? = nil)
 
     /// Presses **ESC** in the worktree's agent pane — the CLI's own interrupt,
     /// which stops the agent mid-turn without killing the session.
