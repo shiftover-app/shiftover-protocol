@@ -122,7 +122,8 @@ public enum RemoteHandshake {
         /// code; its proof is bound to THIS handshake, so it cannot be lifted
         /// into another one.
         public func hello(appVersion: String, deviceID: UUID, deviceName: String,
-                          redeeming code: RemotePairing.Code? = nil) throws -> Hello {
+                          redeeming code: RemotePairing.Code? = nil,
+                          presenceKeys: PresenceKeys? = nil) throws -> Hello {
             if let code, code.publicKey != macPublicKey {
                 throw RemoteHandshakeError.codeDoesNotMatchHost
             }
@@ -137,7 +138,8 @@ public enum RemoteHandshake {
                             RemotePairing.pairingProof(secret: $0.secret,
                                                        pairingID: $0.pairingID,
                                                        handshakeHash: handshakeHash)
-                        })
+                        },
+                        presenceKeys: presenceKeys)
                     return try JSONEncoder().encode(identity)
                 }
                 return Hello(handshake: message)

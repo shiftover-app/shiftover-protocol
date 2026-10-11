@@ -70,14 +70,22 @@ public struct HelloIdentity: Codable, Sendable, Equatable {
     /// `RemotePairing.pairingProof` — an HMAC, keyed by the QR's one-time
     /// secret, over this handshake's hash. Proves the sender saw the code.
     public let pairingProof: Data?
+    /// The phone's Secure Enclave presence keys (`PresenceProof`). The Mac
+    /// records them when a code is redeemed, or, for a device paired before
+    /// they existed, the first time it sends them; after that only pairing
+    /// again replaces them. `nil` from a phone that has none — no passcode,
+    /// or a build that predates them — which may then only read.
+    public let presenceKeys: PresenceKeys?
 
     public init(appVersion: String, deviceID: UUID, deviceName: String,
-                pairingID: String? = nil, pairingProof: Data? = nil) {
+                pairingID: String? = nil, pairingProof: Data? = nil,
+                presenceKeys: PresenceKeys? = nil) {
         self.appVersion = appVersion
         self.deviceID = deviceID
         self.deviceName = deviceName
         self.pairingID = pairingID
         self.pairingProof = pairingProof
+        self.presenceKeys = presenceKeys
     }
 }
 
@@ -138,6 +146,10 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case terminalStream
     /// Desktop can request a push through Cloud on this device's behalf.
     case push
+    /// Writes need a presence proof the Mac checks itself (`PresenceProof`):
+    /// an owner proof via `provePresence` before writing, or an unlocked proof
+    /// on a lock-screen answer.
+    case presenceProof
     /// Any capability this build does not recognise.
     case unknown
 

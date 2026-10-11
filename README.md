@@ -56,6 +56,16 @@ against the published cacophony test vector for that protocol name.
 - **Pairing** proves the QR's one-time secret with an HMAC over the handshake
   hash (`RemotePairing.pairingProof`), so a proof cannot be lifted into another
   handshake.
+- **Writes need a presence proof the Mac checks** (`PresenceProof`). The phone
+  holds two P-256 keys in its Secure Enclave and sends their public halves in
+  the hello. An **owner** proof needs Face ID, Touch ID or the passcode and
+  opens writes on that connection for five minutes (`provePresence`). An
+  **unlocked** proof needs only an unlocked phone and is accepted only for a
+  lock-screen answer, bound to that exact answer
+  (`PresenceProof.notificationBinding`). Both are bound to the connection's
+  handshake hash and carry a counter that must increase. The Mac takes a
+  device's keys at pairing, or the first time a device paired earlier sends
+  them; only pairing again replaces them.
 
 The transport underneath (`ws://` on the LAN, `wss://` to the relay) adds nothing
 the channel relies on.

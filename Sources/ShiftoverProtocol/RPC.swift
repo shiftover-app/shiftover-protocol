@@ -15,10 +15,15 @@ import Foundation
 public struct RPCRequest: Codable, Sendable, Equatable {
     public let id: UUID
     public let method: RPCMethod
+    /// An `unlocked` presence proof bound to this request
+    /// (`PresenceProof.notificationBinding`). Only a lock-screen answer
+    /// carries one; every other write relies on the connection's owner window.
+    public let presence: PresenceAssertion?
 
-    public init(id: UUID = UUID(), method: RPCMethod) {
+    public init(id: UUID = UUID(), method: RPCMethod, presence: PresenceAssertion? = nil) {
         self.id = id
         self.method = method
+        self.presence = presence
     }
 }
 
@@ -118,9 +123,19 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// callers supply an existing worktree ID, never an arbitrary directory.
     case listWorktreeFiles(worktreeID: UUID, query: String)
 
+    // ── Presence ─────────────────────────────────────────────────────────
+    /// An `owner` presence proof (`PresenceProof`). Opens writes on this
+    /// connection for `PresenceProof.window`. Not itself a write: it is what
+    /// a write needs first.
+    case provePresence(PresenceAssertion)
+
     // ── Write: unblock an agent ──────────────────────────────────────────
     /// → `AppState.replyToAgent`
-    case replyToAgent(worktreeID: UUID, text: String)
+    ///
+    /// `questionSentAt` is set when the reply was typed on a notification, as
+    /// for `answerPermission`: the Mac refuses it if the agent has asked
+    /// something newer since. `nil` from the app's own composer.
+    case replyToAgent(worktreeID: UUID, text: String, questionSentAt: Date? = nil)
     /// → `AppState.answerAgentPermission`. Note the desktop only claims a
     /// permission contract for Claude Code; other agents focus instead of
     /// pressing an unverified key, and will answer `.unsupportedForAgent`.
@@ -221,7 +236,10 @@ extension RPCMethod {
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
-             .listSlashCommands, .listWorktreeFiles:
+             .listSlashCommands, .listWorktreeFiles,
+             // Proving presence is what makes writes possible; it changes
+             // nothing on the Mac but this connection's own window.
+             .provePresence:
             return false
         case .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
@@ -296,6 +314,10 @@ public enum RPCErrorCode: String, Codable, Sendable, Equatable {
     case preconditionFailed
     case incompatibleVersion
     case internalError
+    /// The write needs a fresh presence proof (`PresenceProof`). Sent only to a
+    /// phone that registered presence keys, so an older build never receives
+    /// a code it cannot decode.
+    case presenceRequired
 }
 
 /// Everything Go needs to start rendering a live terminal.

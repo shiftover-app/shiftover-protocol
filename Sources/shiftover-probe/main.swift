@@ -23,6 +23,7 @@
 // Pairing state is kept in ./shiftover-probe-state.json — a throwaway, and
 // deliberately not in the user's Application Support.
 
+import CryptoKit
 import Foundation
 import ShiftoverProtocol
 
@@ -36,6 +37,11 @@ struct ProbeState: Codable {
     var macPublicKey: Data
     var host: String
     var port: UInt16
+    /// Software stand-ins for Go's two Secure Enclave presence keys
+    /// (`PresenceProof`). Optional so a state file from before them loads; such
+    /// a pairing can only read until it pairs again.
+    var ownerKey: Data? = nil
+    var unlockedKey: Data? = nil
 
     static let path = URL(fileURLWithPath: "shiftover-probe-state.json")
 
@@ -67,15 +73,24 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
 
     private let identity: RemoteIdentityKey
     private let deviceID: UUID
+    /// What Go keeps in its Secure Enclave. The probe has no enclave and no
+    /// Face ID, so it simply holds the keys — a test harness, not a phone.
+    let ownerKey: P256.Signing.PrivateKey
+    let unlockedKey: P256.Signing.PrivateKey
+    private var presenceCounter: UInt64 = 0
     /// The session. `nil` until the handshake completes; every frame after it
     /// is sealed and opened here.
     private var channel: RemoteChannel?
 
     private let connected = DispatchSemaphore(value: 0)
 
-    init(identity: RemoteIdentityKey, deviceID: UUID) {
+    init(identity: RemoteIdentityKey, deviceID: UUID,
+         ownerKey: P256.Signing.PrivateKey = .init(),
+         unlockedKey: P256.Signing.PrivateKey = .init()) {
         self.identity = identity
         self.deviceID = deviceID
+        self.ownerKey = ownerKey
+        self.unlockedKey = unlockedKey
         super.init()
         session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
     }
@@ -162,8 +177,10 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
             fail("bad Mac key: \(error)")
         }
 
-        let hello = try initiator.hello(appVersion: "probe", deviceID: deviceID,
-                                        deviceName: deviceName, redeeming: code)
+        let hello = try initiator.hello(
+            appVersion: "probe", deviceID: deviceID, deviceName: deviceName, redeeming: code,
+            presenceKeys: PresenceKeys(owner: ownerKey.publicKey.x963Representation,
+                                       unlocked: unlockedKey.publicKey.x963Representation))
         try sendRaw(Frame(type: .hello, payload: try JSONEncoder().encode(hello)))
 
         let reply: Frame
@@ -218,6 +235,19 @@ final class Probe: NSObject, URLSessionWebSocketDelegate {
             return response.result
         }
         fail("no response to \(label)")
+    }
+
+    /// Opens writes on this connection, as Go does after Face ID: an owner
+    /// proof bound to this handshake, with a fresh counter.
+    func provePresence() throws {
+        guard let channel else { fail("not connected") }
+        presenceCounter += 1
+        let message = PresenceProof.message(level: .owner, counter: presenceCounter,
+                                            handshakeHash: channel.handshakeHash)
+        let signature = try ownerKey.signature(for: message).derRepresentation
+        try call(.provePresence(PresenceAssertion(level: .owner, counter: presenceCounter,
+                                                  signature: signature)),
+                 label: "provePresence")
     }
 
     func close() {
@@ -364,7 +394,9 @@ case "pair":
     try probe.handshake(macPublicKey: code.publicKey, code: code, deviceName: "shiftover-probe")
 
     ProbeState(privateKey: identity.rawRepresentation, deviceID: deviceID,
-               macPublicKey: code.publicKey, host: host, port: port).save()
+               macPublicKey: code.publicKey, host: host, port: port,
+               ownerKey: probe.ownerKey.rawRepresentation,
+               unlockedKey: probe.unlockedKey.rawRepresentation).save()
     ok("saved pairing state to \(ProbeState.path.lastPathComponent)")
 
     step("Exercising the RPC surface")
@@ -399,7 +431,15 @@ case "connect":
     let host = arguments.count > 2 ? arguments[2] : state.host
     let port = arguments.count > 3 ? (UInt16(arguments[3]) ?? state.port) : state.port
 
-    let probe = Probe(identity: identity, deviceID: state.deviceID)
+    let probe: Probe
+    if let owner = state.ownerKey.flatMap({ try? P256.Signing.PrivateKey(rawRepresentation: $0) }),
+       let unlocked = state.unlockedKey.flatMap({ try? P256.Signing.PrivateKey(rawRepresentation: $0) }) {
+        probe = Probe(identity: identity, deviceID: state.deviceID,
+                      ownerKey: owner, unlockedKey: unlocked)
+    } else {
+        info("this pairing predates presence keys — writes will be refused until you pair again")
+        probe = Probe(identity: identity, deviceID: state.deviceID)
+    }
     step("Reconnecting to \(host):\(port)")
     try probe.connect(host: host, port: port)
     ok("socket open")
@@ -412,6 +452,9 @@ case "connect":
     step("Exercising the RPC surface")
     try probe.call(.listProjects, label: "listProjects")
     try probe.call(.fleetSummary, label: "fleetSummary")
+    // Unproven first: the Mac must refuse a write before presence is proven.
+    try probe.call(.replyToAgent(worktreeID: UUID(), text: "probe"), label: "replyToAgent (unproven)")
+    try probe.provePresence()
     try probe.call(.replyToAgent(worktreeID: UUID(), text: "probe"), label: "replyToAgent")
 
     // Reconnect mode waits, because this is where streaming is worth proving:
