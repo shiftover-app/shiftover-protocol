@@ -44,6 +44,11 @@ public struct PushContent: Codable, Sendable, Equatable {
 
     public let kind: Kind
     public let worktreeID: UUID
+    /// The pane whose agent this is about, so tapping the notification opens
+    /// that session rather than the worktree's list of tabs. Optional for
+    /// decoding pushes from older Macs, and `nil` when the Mac could not tell
+    /// which pane — the phone then picks the worktree's agent that needs it.
+    public let paneID: UUID?
     /// e.g. "shiftover · feat/relay"
     public let title: String
     public let subtitle: String?
@@ -54,11 +59,12 @@ public struct PushContent: Codable, Sendable, Equatable {
     /// been answered.
     public let sentAt: Date
 
-    public init(kind: Kind, worktreeID: UUID, title: String, subtitle: String?,
+    public init(kind: Kind, worktreeID: UUID, paneID: UUID? = nil, title: String, subtitle: String?,
                 body: String, sentAt: Date = Date(), withdrawn: Bool? = nil) {
         self.withdrawn = withdrawn
         self.kind = kind
         self.worktreeID = worktreeID
+        self.paneID = paneID
         self.title = title
         self.subtitle = subtitle
         self.body = body
@@ -105,7 +111,7 @@ public enum PushSealing {
             throw SealError.invalidKey
         }
         let trimmed = PushContent(kind: content.kind, worktreeID: content.worktreeID,
-                                  title: content.title, subtitle: content.subtitle,
+                                  paneID: content.paneID, title: content.title, subtitle: content.subtitle,
                                   body: truncated(content.body, maxBytes: maxBodyBytes),
                                   sentAt: content.sentAt, withdrawn: content.withdrawn)
         do {

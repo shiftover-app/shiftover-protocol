@@ -11,7 +11,8 @@ final class PushSealingTests: XCTestCase {
 
     private func content(sentAt: Date = Date(), body: String = "Allow Bash: rm -rf build?")
     -> PushContent {
-        PushContent(kind: .permission, worktreeID: UUID(), title: "shiftover · feat/relay",
+        // With a pane, so the APNs size check below covers the largest envelope.
+        PushContent(kind: .permission, worktreeID: UUID(), paneID: UUID(), title: "shiftover · feat/relay",
                     subtitle: "Needs your permission", body: body, sentAt: sentAt)
     }
 
@@ -85,6 +86,21 @@ final class PushSealingTests: XCTestCase {
         let cut = PushSealing.truncated("👍👍👍👍", maxBytes: 11)
         XCTAssertEqual(cut, "👍👍…")
         XCTAssertEqual(PushSealing.truncated("short", maxBytes: 100), "short")
+    }
+
+    func testThePaneSurvivesSealing() throws {
+        let original = PushContent(kind: .input, worktreeID: UUID(), paneID: UUID(), title: "t",
+                                   subtitle: nil, body: String(repeating: "x", count: 5_000))
+        let sealed = try PushSealing.seal(original, toPhoneKey: phone.publicKeyData, from: mac)
+        let opened = try XCTUnwrap(PushSealing.open(sealed, with: phone, fromAnyOf: [mac.publicKeyData]))
+        XCTAssertEqual(opened.content.paneID, original.paneID)
+    }
+
+    func testAPushFromAnOlderMacHasNoPane() throws {
+        // What a Mac built before `paneID` existed encodes.
+        let old = #"{"kind":"done","worktreeID":"\#(UUID().uuidString)","title":"t","body":"b","sentAt":0}"#
+        let content = try JSONDecoder().decode(PushContent.self, from: Data(old.utf8))
+        XCTAssertNil(content.paneID)
     }
 
     func testCategoryIdentifiersAreStable() {
