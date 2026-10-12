@@ -102,6 +102,10 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// dropped socket unsubscribes everything anyway; this is for leaving the
     /// screen while staying connected.
     case unwatchConversation(conversationID: UUID)
+    /// The user opened this worktree's session on the phone. Clears a finished
+    /// or failed turn's badge and its notification, as selecting the worktree
+    /// does on the Mac. A question stays until it is answered.
+    case acknowledgeAgentStatus(worktreeID: UUID)
 
     // ── Slash commands ───────────────────────────────────────────────────
     /// The slash commands actually available in this conversation — the
@@ -236,6 +240,9 @@ extension RPCMethod {
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
              .listConversations, .conversationMessages, .unwatchConversation,
+             // Seeing a finished turn, which is all opening it on the Mac
+             // does too. Runs nothing.
+             .acknowledgeAgentStatus,
              .listSlashCommands, .listWorktreeFiles,
              // Proving presence is what makes writes possible; it changes
              // nothing on the Mac but this connection's own window.

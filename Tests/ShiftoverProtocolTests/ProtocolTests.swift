@@ -359,8 +359,11 @@ final class WriteClassificationTests: XCTestCase {
         }
         for read: RPCMethod in [.listProjects, .fleetSummary, .reviewItems,
                                 .monitorSummary(worktreeID: id), .attachTerminal(paneID: id),
-                                .conversationMessages(conversationID: id, limit: 10)] {
+                                .conversationMessages(conversationID: id, limit: 10),
+                                .acknowledgeAgentStatus(worktreeID: id)] {
             XCTAssertFalse(read.isWrite, "\(read)")
         }
+        let acknowledge = RPCMethod.acknowledgeAgentStatus(worktreeID: id)
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(acknowledge)), acknowledge)
     }
 }
