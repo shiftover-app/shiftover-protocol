@@ -136,6 +136,7 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case agentInsights
     case agentQuestions
     case providerUsage
+    case fileAttachments
     case workspaceImages
     case shellCommands
     case terminalCreation

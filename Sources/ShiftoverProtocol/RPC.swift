@@ -58,6 +58,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// Empty path lists the worktree root. Paths are worktree-relative.
     case browseDirectory(worktreeID: UUID, path: String)
     case readWorkspaceFile(worktreeID: UUID, path: String)
+    /// Uploads are connection-scoped writes; offsets are acknowledged before sending more.
+    case beginAttachment(worktreeID: UUID, name: String, size: Int)
+    case appendAttachment(id: UUID, offset: Int, data: Data)
+    case finishAttachment(id: UUID, sha256: Data)
+    case cancelAttachment(id: UUID)
     case gitBranches(worktreeID: UUID)
     /// Compares HEAD's changes since the merge base with an exact branch ref.
     case gitCompare(worktreeID: UUID, baseRef: String)
@@ -248,7 +253,7 @@ extension RPCMethod {
              // nothing on the Mac but this connection's own window.
              .provePresence:
             return false
-        case .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -261,6 +266,9 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case attachmentStarted(id: UUID)
+    case attachmentProgress(offset: Int)
+    case attachmentReady(path: String)
     case agentQuestions(AgentQuestionsDTO)
     case gitBranches(GitBranchesDTO)
     case gitComparison(GitComparisonDTO)
