@@ -22,6 +22,8 @@ public enum ServerEvent: Codable, Sendable, Equatable {
     case commandHeld(paneID: UUID, command: String, reason: String)
     /// The guard decided. Not `allowed`: the line was cleared and nothing ran.
     case commandDecided(paneID: UUID, command: String, allowed: Bool, reason: String?)
+    /// The host's terminal theme changed (light/dark or another theme).
+    case hostColorsChanged(TerminalColorsDTO)
 
     /// The rendered `AgentStatus` for a worktree changed. `previous` lets Go
     /// distinguish "entered a waiting state" (worth surfacing) from ordinary

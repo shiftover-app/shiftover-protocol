@@ -349,11 +349,35 @@ public struct TerminalAttachment: Codable, Sendable, Equatable {
     public let rows: Int
     /// Scrollback prefix to feed before switching to the live stream.
     public let backfill: Data
+    /// The colours the desktop's terminal draws with (PLAN_52). A guest Mac
+    /// shows its own theme and uses these to tell whether the two differ in
+    /// polarity, or shows them as they are ("their colours"). Absent from
+    /// older desktops.
+    public let colors: TerminalColorsDTO?
 
-    public init(paneID: UUID, cols: Int, rows: Int, backfill: Data) {
+    public init(paneID: UUID, cols: Int, rows: Int, backfill: Data, colors: TerminalColorsDTO? = nil) {
         self.paneID = paneID
         self.cols = cols
         self.rows = rows
         self.backfill = backfill
+        self.colors = colors
+    }
+}
+
+/// A terminal theme as hex strings (`#RRGGBB`): its default foreground and
+/// background, cursor, and the 16 ANSI colours.
+public struct TerminalColorsDTO: Codable, Sendable, Equatable {
+    public var foreground: String
+    public var background: String
+    public var cursor: String?
+    public var ansi: [String]
+    public init(foreground: String, background: String, cursor: String? = nil, ansi: [String]) {
+        self.foreground = foreground; self.background = background; self.cursor = cursor; self.ansi = ansi
+    }
+    /// Sixteen `#RRGGBB` colours and a well-formed foreground and background;
+    /// anything else from a peer is ignored.
+    public var isValid: Bool {
+        let hex = { (s: String) in s.count == 7 && s.hasPrefix("#") && s.dropFirst().allSatisfy(\.isHexDigit) }
+        return hex(foreground) && hex(background) && (cursor.map(hex) ?? true) && ansi.count == 16 && ansi.allSatisfy(hex)
     }
 }

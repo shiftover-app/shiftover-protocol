@@ -36,9 +36,23 @@ final class SharingTests: XCTestCase {
         let pane = UUID()
         for event in [ServerEvent.commandHeld(paneID: pane, command: "git push --force", reason: "Force-pushing rewrites the branch."),
                       .commandDecided(paneID: pane, command: "git push --force", allowed: false, reason: "Blocked by Marko"),
-                      .commandDecided(paneID: pane, command: "ls", allowed: true, reason: nil)] {
+                      .commandDecided(paneID: pane, command: "ls", allowed: true, reason: nil),
+                      .hostColorsChanged(TerminalColorsDTO(foreground: "#cdd6f4", background: "#1e1e2e",
+                                                           ansi: Array(repeating: "#000000", count: 16)))] {
             XCTAssertEqual(try JSONDecoder().decode(ServerEvent.self, from: JSONEncoder().encode(event)), event)
         }
+    }
+
+    /// An attachment from a desktop that predates the colours still decodes.
+    func testTerminalAttachmentColorsAreOptionalAndValidated() throws {
+        let old = Data(#"{"paneID":"6A4C0E2B-1D2E-4C5B-9F7A-2B3C4D5E6F70","cols":80,"rows":24,"backfill":""}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(TerminalAttachment.self, from: old).colors)
+        let colors = TerminalColorsDTO(foreground: "#cdd6f4", background: "#1e1e2e", cursor: "#f5e0dc",
+                                       ansi: Array(repeating: "#45475a", count: 16))
+        XCTAssertTrue(colors.isValid)
+        let attachment = TerminalAttachment(paneID: UUID(), cols: 80, rows: 24, backfill: Data(), colors: colors)
+        XCTAssertEqual(try JSONDecoder().decode(TerminalAttachment.self, from: JSONEncoder().encode(attachment)), attachment)
+        XCTAssertFalse(TerminalColorsDTO(foreground: "red", background: "#000000", ansi: []).isValid)
     }
 
     func testCodeBoundToHandshakeAndLayoutBackwardsCompatible() throws {
