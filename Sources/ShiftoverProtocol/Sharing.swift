@@ -29,7 +29,7 @@ extension RPCMethod {
         case .attachSharedTerminal(let id), .detachTerminal(let id),
              .requestDrive(let id), .releaseDrive(let id): return .pane(id)
         case .reportFocus(let id): return id.map(GuestMethodScope.pane) ?? .connection
-        case .provePresence: return .connection
+        case .provePresence, .registerCollaborator: return .connection
         case .agentQuestions, .answerAgentQuestion, .agentInsights, .providerUsage,
              .createTerminalTab, .gitMutate, .beginAttachment, .appendAttachment,
              .finishAttachment, .cancelAttachment, .notificationPresence,

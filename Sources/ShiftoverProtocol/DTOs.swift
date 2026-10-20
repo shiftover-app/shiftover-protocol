@@ -40,6 +40,8 @@ public struct ProjectDTO: Codable, Sendable, Hashable, Identifiable {
     /// same way the desktop gates on `Project.isGit`.
     public let isGit: Bool
     public var groupName: String? = nil
+    /// Sent to collaborators, to match their projects with this Mac's.
+    public var repoIdentity: RepoIdentity? = nil
 
     public init(id: UUID, name: String, isGit: Bool) {
         self.id = id

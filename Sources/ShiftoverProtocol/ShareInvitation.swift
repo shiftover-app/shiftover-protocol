@@ -32,22 +32,13 @@ public struct ShareInvitation: Codable, Equatable, Sendable {
     }
 
     public func url(landingPage: URL? = nil) -> URL? {
-        guard let data = try? JSONEncoder().encode(self),
-              var url = URLComponents(url: landingPage ?? URL(string: "shiftover://join")!,
-                                      resolvingAgainstBaseURL: false) else { return nil }
-        url.fragment = data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        return url.url
+        InvitationLink.url(self, base: landingPage ?? URL(string: "shiftover://join")!)
     }
 
     public static func parse(_ url: URL, now: Date = Date()) -> ShareInvitation? {
         guard (url.scheme == "shiftover" && url.host == "join") ||
                 (url.scheme == "https" && url.path == "/join"),
-              let fragment = url.fragment, fragment.utf8.count <= 8192 else { return nil }
-        var base64 = fragment.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-        guard let data = Data(base64Encoded: base64),
-              let link = try? JSONDecoder().decode(Self.self, from: data),
+              let link: Self = InvitationLink.decode(url),
               link.version == 1, (link.relay == nil || link.relay?.isSharingRoute == true), link.publicKey.count == 32, link.secret.count == 32,
               !link.pairingID.isEmpty, link.pairingID.utf8.count <= 128,
               !link.address.isEmpty, link.address.utf8.count <= 253, link.port > 0,
