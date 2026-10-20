@@ -26,6 +26,7 @@ let package = Package(
     ],
     products: [
         .library(name: "ShiftoverProtocol", targets: ["ShiftoverProtocol"]),
+        .library(name: "ShiftoverClient", targets: ["ShiftoverClient"]),
         // A command-line stand-in for Shiftover Go. Pairs with a running
         // Shiftover and exercises the RPC surface over a real socket — the unit
         // tests prove the crypto is correct, this proves the pieces are
@@ -39,6 +40,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "ShiftoverProtocol"),
+        .target(name: "ShiftoverClient", dependencies: ["ShiftoverProtocol"]),
+        .testTarget(name: "ShiftoverClientTests", dependencies: ["ShiftoverClient"]),
         .executableTarget(
             name: "shiftover-probe",
             dependencies: ["ShiftoverProtocol"]

@@ -7,9 +7,10 @@ public struct WorkspaceTabDTO: Codable, Sendable, Hashable, Identifiable {
     public let worktreeID: UUID
     public let title: String
     public let panes: [WorkspacePaneDTO]
-    public init(id: UUID, projectID: UUID, worktreeID: UUID, title: String, panes: [WorkspacePaneDTO]) {
+    public let layout: WorkspaceLayoutDTO?
+    public init(id: UUID, projectID: UUID, worktreeID: UUID, title: String, panes: [WorkspacePaneDTO], layout: WorkspaceLayoutDTO? = nil) {
         self.id = id; self.projectID = projectID; self.worktreeID = worktreeID
-        self.title = title; self.panes = panes
+        self.title = title; self.panes = panes; self.layout = layout
     }
 }
 

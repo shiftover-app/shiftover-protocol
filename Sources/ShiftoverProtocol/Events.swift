@@ -12,6 +12,12 @@ import Foundation
 // decode an event must SKIP it, never drop the connection.
 
 public enum ServerEvent: Codable, Sendable, Equatable {
+    case driverChanged(paneID: UUID, deviceID: UUID?, name: String?)
+    case hostFocusChanged(paneID: UUID?)
+    case guestFocusChanged(paneID: UUID?)
+    case shareEnded
+    case shareRestoring
+
     /// The rendered `AgentStatus` for a worktree changed. `previous` lets Go
     /// distinguish "entered a waiting state" (worth surfacing) from ordinary
     /// churn, matching how the desktop gates its own notifications.

@@ -49,6 +49,10 @@ public enum RPCMethod: Codable, Sendable, Equatable {
 
     // ── Read ─────────────────────────────────────────────────────────────
     case workspace
+    case attachSharedTerminal(paneID: UUID)
+    case requestDrive(paneID: UUID)
+    case releaseDrive(paneID: UUID)
+    case reportFocus(paneID: UUID?)
     case agentQuestions(paneID: UUID)
     case answerAgentQuestion(paneID: UUID, answer: AgentQuestionAnswer, requestID: UUID)
     case agentInsights(worktreeID: UUID)
@@ -240,7 +244,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.

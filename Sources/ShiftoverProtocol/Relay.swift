@@ -27,6 +27,28 @@ public struct RelayRoute: Codable, Sendable, Equatable {
         self.token = token
     }
 
+    /// A separate relay namespace for project sharing. Only loopback development
+    /// relays may use cleartext WebSockets; invitations otherwise require TLS.
+    public static func sharing(baseURL: String, token: String = mintToken()) -> RelayRoute? {
+        guard var parts = URLComponents(string: baseURL) else { return nil }
+        parts.path = parts.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .split(separator: "/").map(String.init).joined(separator: "/")
+        parts.path = (parts.path.isEmpty ? "" : "/" + parts.path) + "/share"
+        guard let url = parts.string else { return nil }
+        let route = RelayRoute(url: url, token: token)
+        return route.isSharingRoute ? route : nil
+    }
+
+    public var isSharingRoute: Bool {
+        guard url.utf8.count <= 2048, let parts = URLComponents(string: url),
+              let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.hasSuffix("/share"), !parts.path.split(separator: "/").contains(".."),
+              token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              parts.port == nil || (1...65535).contains(parts.port!) else { return false }
+        return parts.scheme == "wss" || (parts.scheme == "ws" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host))
+    }
+
     /// Mints a fresh token for a new pairing.
     public static func mintToken() -> String {
         RemotePairing.base64url(RemotePairing.randomBytes(32))
