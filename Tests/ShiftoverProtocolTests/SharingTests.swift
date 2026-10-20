@@ -29,6 +29,18 @@ final class SharingTests: XCTestCase {
         }
         XCTAssertNil(ShareInvitation.parse(URL(string: "shiftover://join#garbage")!))
     }
+    /// The Return guard's two events survive the wire, and a build that
+    /// predates them fails to decode them (and skips them) rather than
+    /// misreading them as another event.
+    func testReturnGuardEventsRoundTrip() throws {
+        let pane = UUID()
+        for event in [ServerEvent.commandHeld(paneID: pane, command: "git push --force", reason: "Force-pushing rewrites the branch."),
+                      .commandDecided(paneID: pane, command: "git push --force", allowed: false, reason: "Blocked by Marko"),
+                      .commandDecided(paneID: pane, command: "ls", allowed: true, reason: nil)] {
+            XCTAssertEqual(try JSONDecoder().decode(ServerEvent.self, from: JSONEncoder().encode(event)), event)
+        }
+    }
+
     func testCodeBoundToHandshakeAndLayoutBackwardsCompatible() throws {
         let one = ShareInvitation.confirmationCode(handshakeHash: Data([1]))
         XCTAssertEqual(one.count, 6)

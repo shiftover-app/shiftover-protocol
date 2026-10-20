@@ -17,6 +17,11 @@ public enum ServerEvent: Codable, Sendable, Equatable {
     case guestFocusChanged(paneID: UUID?)
     case shareEnded
     case shareRestoring
+    /// The host's Return guard (PLAN_52) holds a command the guest is about
+    /// to run in a shared terminal until the host allows or blocks it.
+    case commandHeld(paneID: UUID, command: String, reason: String)
+    /// The guard decided. Not `allowed`: the line was cleared and nothing ran.
+    case commandDecided(paneID: UUID, command: String, allowed: Bool, reason: String?)
 
     /// The rendered `AgentStatus` for a worktree changed. `previous` lets Go
     /// distinguish "entered a waiting state" (worth surfacing) from ordinary
