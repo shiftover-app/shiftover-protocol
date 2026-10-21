@@ -55,6 +55,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case reportFocus(paneID: UUID?)
     /// A collaborator's way back after pairing (PLAN_52 Phase 2).
     case registerCollaborator(CollaboratorRoute)
+    /// A collaborator asking the Mac that holds the relay's access key for a
+    /// `RelayPass`, so it can share over the relay too.
+    case requestRelayPass
+    /// A guest closing a terminal it opened in the shared project.
+    case closeSharedTerminal(paneID: UUID)
     case agentQuestions(paneID: UUID)
     case answerAgentQuestion(paneID: UUID, answer: AgentQuestionAnswer, requestID: UUID)
     case agentInsights(worktreeID: UUID)
@@ -246,7 +251,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -259,7 +264,7 @@ extension RPCMethod {
              // nothing on the Mac but this connection's own window.
              .provePresence:
             return false
-        case .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .closeSharedTerminal, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -304,6 +309,7 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case panes([PaneDTO])
     case terminalAttached(TerminalAttachment)
     case taskStarted(worktreeID: UUID)
+    case relayPass(RelayPass)
     /// A mutating verb that succeeded and has nothing to return.
     case ok
     case failure(RPCError)

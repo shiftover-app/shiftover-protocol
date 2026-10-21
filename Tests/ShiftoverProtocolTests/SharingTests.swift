@@ -67,12 +67,14 @@ final class SharingTests: XCTestCase {
     func testGuestCannotUseOwnerMutationsOrLegacyAttach() {
         let id = UUID()
         let denied: [RPCMethod] = [.attachTerminal(paneID: id), .providerUsage, .fleetSummary,
-            .notificationPresence(mode: nil, rssi: nil), .createTerminalTab(worktreeID: id, requestID: id),
+            .notificationPresence(mode: nil, rssi: nil),
             .gitMutate(worktreeID: id, action: .push, expectedRevision: "", requestID: id),
             .replyToAgent(worktreeID: id, text: "run"), .submitShellCommand(paneID: id, promptID: id, command: "run"),
             .beginAttachment(worktreeID: id, name: "file", size: 1), .listConversations(projectID: nil)]
         for method in denied { XCTAssertEqual(method.guestScope, .denied, "\(method)") }
         XCTAssertEqual(RPCMethod.attachSharedTerminal(paneID: id).guestScope, .pane(id))
         XCTAssertEqual(RPCMethod.readWorkspaceFile(worktreeID: id, path: "file").guestScope, .worktree(id))
+        // A new terminal is scoped to the shared worktree; the host asks first.
+        XCTAssertEqual(RPCMethod.createTerminalTab(worktreeID: id, requestID: id).guestScope, .worktree(id))
     }
 }

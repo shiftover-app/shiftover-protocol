@@ -478,7 +478,9 @@ public final class RemoteClient: NSObject {
         try await call(method, timeout: nil)
     }
 
-    private func call(_ method: RPCMethod, timeout explicitTimeout: Duration?) async throws -> RPCResult {
+    /// A call that may wait longer than `requestTimeout` — for one the other
+    /// side answers only once its user decides.
+    public func call(_ method: RPCMethod, timeout explicitTimeout: Duration?) async throws -> RPCResult {
         guard channel != nil, let socket = task else { throw ClientError.notConnected }
         if method.isWrite {
             try await unlockWrites()

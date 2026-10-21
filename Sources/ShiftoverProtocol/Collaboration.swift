@@ -141,3 +141,42 @@ enum InvitationLink {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 }
+
+/// Lets a Mac without the relay's access key open sharing routes on it: a
+/// collaborator's Mac, given one by a Mac that has the key. Signed with the
+/// key, so the relay checks it without storing anything; it expires, so one
+/// stops working soon after the pairing that renewed it ends, and changing
+/// the key ends them all. Sent in the access-key header; the relay accepts
+/// one only on its sharing path, never for phone pairings.
+public struct RelayPass: Codable, Sendable, Equatable {
+    public static let prefix = "pass.v1."
+    /// The longest a pass may run; the relay refuses one that claims more.
+    public static let maximumLifetime: TimeInterval = 45 * 86_400
+
+    public var token: String
+    public var expiresAt: Date
+
+    public init(token: String, expiresAt: Date) {
+        self.token = token
+        self.expiresAt = expiresAt
+    }
+
+    /// `pass.v1.<expiry, Unix seconds>.<id>.<base64url HMAC-SHA256>`, the MAC
+    /// over `shiftover-relay-pass/v1\n<expiry>\n<id>` keyed with the access key.
+    public static func mint(accessKey: String, id: String, expiresAt: Date) -> RelayPass? {
+        let expiry = Int(expiresAt.timeIntervalSince1970)
+        guard !accessKey.isEmpty, isValidID(id), expiry > 0 else { return nil }
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(message(expiry: expiry, id: id).utf8),
+                                                        using: SymmetricKey(data: Data(accessKey.utf8)))
+        let mac = Data(signature).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return RelayPass(token: "\(prefix)\(expiry).\(id).\(mac)", expiresAt: Date(timeIntervalSince1970: TimeInterval(expiry)))
+    }
+
+    static func message(expiry: Int, id: String) -> String { "shiftover-relay-pass/v1\n\(expiry)\n\(id)" }
+
+    static func isValidID(_ id: String) -> Bool {
+        (1...64).contains(id.count) && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+}
