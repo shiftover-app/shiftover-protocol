@@ -24,6 +24,9 @@ public enum ServerEvent: Codable, Sendable, Equatable {
     case commandDecided(paneID: UUID, command: String, allowed: Bool, reason: String?)
     /// The host's terminal theme changed (light/dark or another theme).
     case hostColorsChanged(TerminalColorsDTO)
+    /// The host ended a guest's "Fit to me" on a shared terminal; it is back
+    /// at the host's own size.
+    case sharedFitEnded(paneID: UUID)
 
     /// The rendered `AgentStatus` for a worktree changed. `previous` lets Go
     /// distinguish "entered a waiting state" (worth surfacing) from ordinary

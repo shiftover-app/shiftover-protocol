@@ -25,6 +25,8 @@ final class RelayPassTests: XCTestCase {
                        .worktree(worktree))
         XCTAssertEqual(RPCMethod.closeSharedTerminal(paneID: pane).guestScope, .pane(pane))
         XCTAssertTrue(RPCMethod.closeSharedTerminal(paneID: pane).isWrite)
+        XCTAssertEqual(RPCMethod.fitSharedTerminal(paneID: pane, cols: 80, rows: 24).guestScope, .pane(pane))
+        XCTAssertFalse(RPCMethod.fitSharedTerminal(paneID: pane, cols: 80, rows: 24).isWrite, "a way of looking, not typing")
         XCTAssertEqual(RPCMethod.requestRelayPass.guestScope, .connection)
         XCTAssertFalse(RPCMethod.requestRelayPass.isWrite)
     }

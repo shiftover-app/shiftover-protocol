@@ -60,6 +60,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     case requestRelayPass
     /// A guest closing a terminal it opened in the shared project.
     case closeSharedTerminal(paneID: UUID)
+    /// A guest asking for a shared terminal at its own grid while it looks at
+    /// it ("Fit to me"), so the program lays out for its screen; 0 × 0 ends
+    /// it. The host holds it there only while the guest looks at that tab
+    /// (the smaller of the two while the host looks too).
+    case fitSharedTerminal(paneID: UUID, cols: Int, rows: Int)
     case agentQuestions(paneID: UUID)
     case answerAgentQuestion(paneID: UUID, answer: AgentQuestionAnswer, requestID: UUID)
     case agentInsights(worktreeID: UUID)
@@ -251,7 +256,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .fitSharedTerminal, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.

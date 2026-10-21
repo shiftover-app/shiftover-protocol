@@ -27,7 +27,8 @@ extension RPCMethod {
              .gitFileDiff(let id, _, _), .listPanes(let id), .listWorktreeFiles(let id, _):
             return .worktree(id)
         case .attachSharedTerminal(let id), .detachTerminal(let id),
-             .requestDrive(let id), .releaseDrive(let id), .closeSharedTerminal(let id): return .pane(id)
+             .requestDrive(let id), .releaseDrive(let id), .closeSharedTerminal(let id),
+             .fitSharedTerminal(let id, _, _): return .pane(id)
         case .reportFocus(let id): return id.map(GuestMethodScope.pane) ?? .connection
         case .provePresence, .registerCollaborator, .requestRelayPass: return .connection
         // A new terminal in the shared project, for someone who may drive;
