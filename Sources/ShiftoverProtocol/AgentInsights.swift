@@ -54,7 +54,19 @@ public struct ProviderUsageWindowDTO: Codable, Sendable, Equatable {
     public var percentUsed: Double
     public var resetsAt: Date?
     public var detail: String?
-    public init(label: String, percentUsed: Double, resetsAt: Date? = nil, detail: String? = nil) {
+    /// Which limit this is, independent of `label` (display copy that differs
+    /// between providers and can be reworded): `session` for the short rolling
+    /// window (five hours), `weekly`, or `other` for per-model caps and billing
+    /// cycles. Open vocabulary; `nil` from a Mac that predates it.
+    public var kind: String?
+    public init(label: String, percentUsed: Double, resetsAt: Date? = nil, detail: String? = nil, kind: String? = nil) {
         self.label = label; self.percentUsed = percentUsed; self.resetsAt = resetsAt; self.detail = detail
+        self.kind = kind
     }
+}
+
+public extension ProviderUsageWindowDTO {
+    static let sessionKind = "session"
+    static let weeklyKind = "weekly"
+    static let otherKind = "other"
 }

@@ -18,6 +18,16 @@ final class AgentInsightsTests: XCTestCase {
         let result = RPCResult.providerUsage([.init(id: "codex", name: "Codex", state: "loading")])
         XCTAssertEqual(try JSONDecoder().decode(RPCResult.self, from: JSONEncoder().encode(result)), result)
     }
+    func testWindowKindRoundTripsAndIsOptional() throws {
+        let window = ProviderUsageWindowDTO(label: "5-hour window", percentUsed: 12, kind: ProviderUsageWindowDTO.sessionKind)
+        XCTAssertEqual(try JSONDecoder().decode(ProviderUsageWindowDTO.self, from: JSONEncoder().encode(window)), window)
+        XCTAssertTrue(try XCTUnwrap(String(data: JSONEncoder().encode(window), encoding: .utf8)).contains("\"kind\":\"session\""))
+        // A Mac that predates `kind` sends only the label, and a window without
+        // one leaves no key, which is all an older phone has ever seen.
+        let old = try JSONDecoder().decode(ProviderUsageWindowDTO.self, from: Data("{\"label\":\"Weekly\",\"percentUsed\":3}".utf8))
+        XCTAssertNil(old.kind)
+        XCTAssertFalse(try XCTUnwrap(String(data: JSONEncoder().encode(old), encoding: .utf8)).contains("kind"))
+    }
     func testMissingMetricsRemainUnknown() throws {
         let data = Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"sessionID\":\"unknown\"}".utf8)
         let dto = try JSONDecoder().decode(AgentSessionInsightDTO.self, from: data)
