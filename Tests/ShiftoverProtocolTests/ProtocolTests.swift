@@ -264,6 +264,20 @@ final class CodableShapeTests: XCTestCase {
 
 final class DTOSemanticsTests: XCTestCase {
 
+    /// A worktree with one agent finished and another still working is
+    /// working; anything waiting on the user outranks both.
+    func testRollupPrefersWorkOverAFinishedTurnAndQuestionsOverBoth() {
+        XCTAssertEqual(AgentStatusDTO.rollup([.done, .working]), .working)
+        XCTAssertEqual(AgentStatusDTO.rollup([.working, .done, .present]), .working)
+        XCTAssertEqual(AgentStatusDTO.rollup([.done, .present, .idle]), .done)
+        XCTAssertEqual(AgentStatusDTO.rollup([.working, .input]), .input)
+        XCTAssertEqual(AgentStatusDTO.rollup([.working, .permission, .input]), .permission)
+        XCTAssertEqual(AgentStatusDTO.rollup([.working, .error]), .error)
+        XCTAssertEqual(AgentStatusDTO.rollup([AgentStatusDTO]()), .idle)
+        // `salience` still ranks a finished turn first, for picking a session.
+        XCTAssertGreaterThan(AgentStatusDTO.done.salience, AgentStatusDTO.working.salience)
+    }
+
     func testNeedsAttentionMatchesTheWaitingStates() {
         XCTAssertEqual(
             Set([AgentStatusDTO.input, .permission, .error]),
@@ -365,5 +379,17 @@ final class WriteClassificationTests: XCTestCase {
         }
         let acknowledge = RPCMethod.acknowledgeAgentStatus(worktreeID: id)
         XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(acknowledge)), acknowledge)
+        let pane = RPCMethod.acknowledgeAgentStatus(worktreeID: id, paneID: UUID())
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: JSONEncoder().encode(pane)), pane)
+    }
+
+    /// A phone that names the pane must still be understood by a Mac from
+    /// before the field, and the reverse: the field is optional on the wire.
+    func testAcknowledgeWithoutAPaneDecodesAndThePaneIsOptionalOnTheWire() throws {
+        let id = UUID()
+        let old = Data(#"{"acknowledgeAgentStatus":{"worktreeID":"\#(id.uuidString)"}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(RPCMethod.self, from: old), .acknowledgeAgentStatus(worktreeID: id, paneID: nil))
+        let encoded = try JSONEncoder().encode(RPCMethod.acknowledgeAgentStatus(worktreeID: id))
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("paneID"))
     }
 }

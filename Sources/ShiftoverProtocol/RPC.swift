@@ -126,7 +126,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// The user opened this worktree's session on the phone. Clears a finished
     /// or failed turn's badge and its notification, as selecting the worktree
     /// does on the Mac. A question stays until it is answered.
-    case acknowledgeAgentStatus(worktreeID: UUID)
+    ///
+    /// `paneID` names the session's agent pane, so opening one of several
+    /// sessions in a worktree clears that one's badge and leaves the others'.
+    /// A Mac from before the field ignores it and clears the whole worktree.
+    case acknowledgeAgentStatus(worktreeID: UUID, paneID: UUID? = nil)
 
     // ── Slash commands ───────────────────────────────────────────────────
     /// The slash commands actually available in this conversation — the

@@ -628,7 +628,7 @@ final class FakeMac: @unchecked Sendable {
             let result: RPCResult
             switch request.method {
             case .provePresence: result = .ok
-            case .acknowledgeAgentStatus(let worktreeID):
+            case .acknowledgeAgentStatus(let worktreeID, _):
                 acknowledged.append(worktreeID)
                 result = .ok
             case .fleetSummary: result = .fleetSummary(FleetSummaryDTO(queued: 0, working: 1, toReview: 0))

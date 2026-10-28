@@ -63,6 +63,30 @@ public enum AgentPaneAction: Codable, Sendable, Equatable {
 }
 
 extension AgentStatusDTO {
+    /// One status standing for several sessions — a worktree with two agents,
+    /// a project with several worktrees.
+    ///
+    /// Not `salience`, which ranks a finished turn above a working one: right
+    /// for picking which one session to open, wrong for a row that stands for
+    /// all of them. One agent finishing while another is still at work is not
+    /// a finished worktree. Anything waiting on the user still wins, then work
+    /// in progress, then a finished turn's badge.
+    public static func rollup<S: Sequence>(_ statuses: S) -> AgentStatusDTO where S.Element == AgentStatusDTO {
+        statuses.max { $0.rollupRank < $1.rollupRank } ?? .idle
+    }
+
+    var rollupRank: Int {
+        switch self {
+        case .idle: return 0
+        case .present: return 1
+        case .done: return 2
+        case .working: return 3
+        case .input: return 4
+        case .permission: return 5
+        case .error: return 6
+        }
+    }
+
     /// Same priority as the Mac sidebar.
     public var salience: Int {
         switch self {
