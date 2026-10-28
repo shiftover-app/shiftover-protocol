@@ -114,10 +114,19 @@ public enum PushSealing {
                                   paneID: content.paneID, title: content.title, subtitle: content.subtitle,
                                   body: truncated(content.body, maxBytes: maxBodyBytes),
                                   sentAt: content.sentAt, withdrawn: content.withdrawn)
+        guard let plaintext = try? JSONEncoder().encode(trimmed) else { throw SealError.sealFailed }
+        return try sealData(plaintext, info: info, to: recipient, from: mac)
+    }
+
+    /// One HPKE auth-mode box from the Mac to the phone. `info` keeps each kind
+    /// of box (a push, a Live Activity) from being opened as another.
+    static func sealData(_ plaintext: Data, info: Data,
+                         to recipient: Curve25519.KeyAgreement.PublicKey,
+                         from mac: RemoteIdentityKey) throws -> SealedPush {
         do {
             var sender = try HPKE.Sender(recipientKey: recipient, ciphersuite: ciphersuite,
                                          info: info, authenticatedBy: mac.privateKey)
-            let ciphertext = try sender.seal(try JSONEncoder().encode(trimmed))
+            let ciphertext = try sender.seal(plaintext)
             return SealedPush(encapsulatedKey: sender.encapsulatedKey, ciphertext: ciphertext)
         } catch {
             throw SealError.sealFailed
@@ -133,17 +142,25 @@ public enum PushSealing {
     public static func open(_ sealed: SealedPush, with phone: RemoteIdentityKey,
                             fromAnyOf macKeys: [Data], now: Date = Date())
     -> (content: PushContent, macKey: Data)? {
+        guard let (plaintext, macKey) = openData(sealed, info: info, with: phone, fromAnyOf: macKeys),
+              let content = try? JSONDecoder().decode(PushContent.self, from: plaintext),
+              now.timeIntervalSince(content.sentAt) <= maxAge,
+              content.sentAt.timeIntervalSince(now) <= 60 else { return nil }
+        return (content, macKey)
+    }
+
+    /// Opens a box sealed by `sealData`, returning its plaintext and the key of
+    /// the paired Mac that sealed it.
+    static func openData(_ sealed: SealedPush, info: Data, with phone: RemoteIdentityKey,
+                         fromAnyOf macKeys: [Data]) -> (plaintext: Data, macKey: Data)? {
         for macKey in macKeys {
             guard let sender = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macKey),
                   var recipient = try? HPKE.Recipient(
                       privateKey: phone.privateKey, ciphersuite: ciphersuite, info: info,
                       encapsulatedKey: sealed.encapsulatedKey, authenticatedBy: sender),
-                  let plaintext = try? recipient.open(sealed.ciphertext),
-                  let content = try? JSONDecoder().decode(PushContent.self, from: plaintext)
+                  let plaintext = try? recipient.open(sealed.ciphertext)
             else { continue }
-            guard now.timeIntervalSince(content.sentAt) <= maxAge,
-                  content.sentAt.timeIntervalSince(now) <= 60 else { return nil }
-            return (content, macKey)
+            return (plaintext, macKey)
         }
         return nil
     }
