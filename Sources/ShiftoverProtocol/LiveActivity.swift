@@ -6,10 +6,21 @@
 //
 // ActivityKit hands a push's `content-state` straight to the widget extension,
 // with no service extension in between, so whatever it holds is visible to the
-// relay and to Apple. So, as for notifications, the Mac seals the content to
-// the phone's key (HPKE auth mode, its own `info` label) and the content state
-// is only the box; the widget extension opens it when it draws. What leaks is
-// what a notification leaks: that an update happened, when, and its rough size.
+// relay and to Apple. So the Mac seals the content and the content state is
+// only the box. What leaks is what a notification leaks: that an update
+// happened, when, and its rough size.
+//
+// ── Why a shared key rather than HPKE to the phone's key ────────────────
+//
+// The extension opens the box while iOS draws the activity, and there the
+// keychain is unavailable (`errSecNotAvailable`, seen on a device) — so it
+// cannot hold this phone's identity key the way the notification extension
+// does. Instead each Mac and phone derive one symmetric key from the two
+// identity keys they already exchanged at pairing (X25519, then HKDF), with
+// nothing sent. The phone keeps that key in a file its activity extension can
+// read; losing it exposes Live Activity content and nothing else — not the
+// identity, the channel or notifications. A box only the two holders of the
+// key could have sealed is authenticated by construction.
 
 import CryptoKit
 import Foundation
@@ -137,33 +148,80 @@ public enum ActivitySealing {
 
     static let info = Data("shiftover-activity/v1".utf8)
 
-    /// Seals `content` to the phone, authenticated as the Mac.
-    public static func seal(_ content: AgentsActivityContent, toPhoneKey phoneKey: Data,
-                            from mac: RemoteIdentityKey) throws -> SealedPush {
-        guard let recipient = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: phoneKey) else {
-            throw PushSealing.SealError.invalidKey
-        }
-        guard let plaintext = try? JSONEncoder().encode(content) else {
-            throw PushSealing.SealError.sealFailed
-        }
-        return try PushSealing.sealData(plaintext, info: info, to: recipient, from: mac)
+    public enum KeyError: Error, Equatable {
+        case invalidKey
     }
 
-    /// Opens a Live Activity's content on the phone. `nil` if no paired Mac
-    /// sealed it, it was tampered with, or it claims to come from the future.
+    /// The key a Mac shares with one phone, on the Mac.
+    public static func key(mac: RemoteIdentityKey, phonePublicKey: Data) throws -> SymmetricKey {
+        try key(privateKey: mac.privateKey, peer: phonePublicKey,
+                macPublic: mac.publicKeyData, phonePublic: phonePublicKey)
+    }
+
+    /// The same key, on the phone.
+    public static func key(phone: RemoteIdentityKey, macPublicKey: Data) throws -> SymmetricKey {
+        try key(privateKey: phone.privateKey, peer: macPublicKey,
+                macPublic: macPublicKey, phonePublic: phone.publicKeyData)
+    }
+
+    private static func key(privateKey: Curve25519.KeyAgreement.PrivateKey, peer: Data,
+                            macPublic: Data, phonePublic: Data) throws -> SymmetricKey {
+        guard let peerKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: peer),
+              let shared = try? privateKey.sharedSecretFromKeyAgreement(with: peerKey)
+        else { throw KeyError.invalidKey }
+        // Both public keys, Mac first, bind the key to this one pairing.
+        return shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: info,
+                                              sharedInfo: macPublic + phonePublic, outputByteCount: 32)
+    }
+
+    /// Seals `content` with a pairing's key: the nonce rides as
+    /// `encapsulatedKey`, ciphertext and tag as `ciphertext` — the two fields
+    /// the relay already carries as the content state's `k` and `c`.
+    public static func seal(_ content: AgentsActivityContent, with key: SymmetricKey) throws -> SealedPush {
+        guard let plaintext = try? JSONEncoder().encode(content),
+              let box = try? ChaChaPoly.seal(plaintext, using: key)
+        else { throw PushSealing.SealError.sealFailed }
+        return SealedPush(encapsulatedKey: Data(box.nonce), ciphertext: box.ciphertext + box.tag)
+    }
+
+    /// Seals `content` for one phone, on the Mac.
+    public static func seal(_ content: AgentsActivityContent, toPhoneKey phoneKey: Data,
+                            from mac: RemoteIdentityKey) throws -> SealedPush {
+        guard let key = try? key(mac: mac, phonePublicKey: phoneKey) else { throw PushSealing.SealError.invalidKey }
+        return try seal(content, with: key)
+    }
+
+    /// Opens a Live Activity's content with whichever of the phone's keys —
+    /// one per paired Mac, by the Mac's public key — sealed it. `nil` if none
+    /// did, it was tampered with, or it claims to come from the future.
     ///
     /// Unlike a push there is no maximum age: the content stands until the Mac
     /// sends the next, which may be hours later while an agent works. iOS
     /// marks the activity stale on its own (`stale-date`), and draws only the
     /// newest update it was given.
+    public static func open(_ sealed: SealedPush, keys: [(macKey: Data, key: SymmetricKey)],
+                            now: Date = Date()) -> (content: AgentsActivityContent, macKey: Data)? {
+        guard sealed.ciphertext.count > 16,
+              let nonce = try? ChaChaPoly.Nonce(data: sealed.encapsulatedKey),
+              let box = try? ChaChaPoly.SealedBox(nonce: nonce, ciphertext: sealed.ciphertext.dropLast(16),
+                                                  tag: sealed.ciphertext.suffix(16))
+        else { return nil }
+        for (macKey, key) in keys {
+            guard let plaintext = try? ChaChaPoly.open(box, using: key) else { continue }
+            guard let content = try? JSONDecoder().decode(AgentsActivityContent.self, from: plaintext),
+                  content.sentAt.timeIntervalSince(now) <= 60 else { return nil }
+            return (content, macKey)
+        }
+        return nil
+    }
+
+    /// The same, deriving each paired Mac's key from this phone's identity.
     public static func open(_ sealed: SealedPush, with phone: RemoteIdentityKey,
                             fromAnyOf macKeys: [Data], now: Date = Date())
     -> (content: AgentsActivityContent, macKey: Data)? {
-        guard let (plaintext, macKey) = PushSealing.openData(sealed, info: info, with: phone,
-                                                             fromAnyOf: macKeys),
-              let content = try? JSONDecoder().decode(AgentsActivityContent.self, from: plaintext),
-              content.sentAt.timeIntervalSince(now) <= 60 else { return nil }
-        return (content, macKey)
+        open(sealed, keys: macKeys.compactMap { macKey in
+            (try? key(phone: phone, macPublicKey: macKey)).map { (macKey, $0) }
+        }, now: now)
     }
 
     /// Names a Mac in a Live Activity's attributes without naming it to the

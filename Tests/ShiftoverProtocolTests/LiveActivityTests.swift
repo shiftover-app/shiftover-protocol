@@ -54,18 +54,50 @@ final class LiveActivityTests: XCTestCase {
                                           now: now))
     }
 
-    /// The `info` label keeps a box sealed for one purpose from opening as the
-    /// other: activity content sealed under the notification label is refused,
-    /// though it would decode.
-    func testActivityContentSealedAsANotificationDoesNotOpen() throws {
-        let plaintext = try JSONEncoder().encode(content([agent(.done)]))
-        let recipient = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: phone.publicKeyData)
-        let underPushLabel = try PushSealing.sealData(plaintext, info: PushSealing.info, to: recipient, from: mac)
-        XCTAssertNil(ActivitySealing.open(underPushLabel, with: phone, fromAnyOf: [mac.publicKeyData], now: now))
-        let underActivityLabel = try PushSealing.sealData(plaintext, info: ActivitySealing.info, to: recipient,
-                                                          from: mac)
-        XCTAssertNotNil(ActivitySealing.open(underActivityLabel, with: phone, fromAnyOf: [mac.publicKeyData],
-                                             now: now))
+    /// Mac and phone arrive at the same key, each from its own private key and
+    /// the other's public one — nothing about it is sent — and no other pair
+    /// does.
+    func testMacAndPhoneDeriveTheSameKeyAndNoOtherPairDoes() throws {
+        let onMac = try ActivitySealing.key(mac: mac, phonePublicKey: phone.publicKeyData)
+        let onPhone = try ActivitySealing.key(phone: phone, macPublicKey: mac.publicKeyData)
+        XCTAssertEqual(onMac.withUnsafeBytes { Data($0) }, onPhone.withUnsafeBytes { Data($0) })
+        let otherPhone = try ActivitySealing.key(mac: mac, phonePublicKey: RemoteIdentityKey().publicKeyData)
+        XCTAssertNotEqual(onMac.withUnsafeBytes { Data($0) }, otherPhone.withUnsafeBytes { Data($0) })
+        XCTAssertThrowsError(try ActivitySealing.key(phone: phone, macPublicKey: Data([1, 2, 3])))
+    }
+
+    /// What the extension does: open with the keys the app wrote down, and
+    /// say which Mac's it was.
+    func testOpensWithTheStoredKeyOfTheMacThatSealedIt() throws {
+        let original = content([agent(.working)])
+        let sealed = try ActivitySealing.seal(original, toPhoneKey: phone.publicKeyData, from: mac)
+        let other = RemoteIdentityKey()
+        let keys = try [other, mac].map { ($0.publicKeyData, try ActivitySealing.key(phone: phone, macPublicKey: $0.publicKeyData)) }
+        let opened = try XCTUnwrap(ActivitySealing.open(sealed, keys: keys, now: now))
+        XCTAssertEqual(opened.content, original)
+        XCTAssertEqual(opened.macKey, mac.publicKeyData)
+        XCTAssertNil(ActivitySealing.open(sealed, keys: [keys[0]], now: now))
+    }
+
+    func testATamperedBoxIsRefused() throws {
+        let sealed = try ActivitySealing.seal(content([agent(.working)]), toPhoneKey: phone.publicKeyData, from: mac)
+        var ciphertext = sealed.ciphertext
+        ciphertext[ciphertext.startIndex] ^= 1
+        XCTAssertNil(ActivitySealing.open(SealedPush(encapsulatedKey: sealed.encapsulatedKey, ciphertext: ciphertext),
+                                          with: phone, fromAnyOf: [mac.publicKeyData], now: now))
+        XCTAssertNil(ActivitySealing.open(SealedPush(encapsulatedKey: Data([1]), ciphertext: sealed.ciphertext),
+                                          with: phone, fromAnyOf: [mac.publicKeyData], now: now))
+    }
+
+    /// A notification's box and an activity's are different constructions
+    /// under different labels; neither opens as the other.
+    func testANotificationBoxDoesNotOpenAsAnActivity() throws {
+        let push = PushContent(kind: .done, worktreeID: UUID(), title: "t", subtitle: nil, body: "b", sentAt: now)
+        let sealedPush = try PushSealing.seal(push, toPhoneKey: phone.publicKeyData, from: mac)
+        XCTAssertNil(ActivitySealing.open(sealedPush, with: phone, fromAnyOf: [mac.publicKeyData], now: now))
+        let sealedActivity = try ActivitySealing.seal(content([agent(.done)]), toPhoneKey: phone.publicKeyData,
+                                                      from: mac)
+        XCTAssertNil(PushSealing.open(sealedActivity, with: phone, fromAnyOf: [mac.publicKeyData], now: now))
     }
 
     /// Content stands until the next update, so an hour-old one still opens;
