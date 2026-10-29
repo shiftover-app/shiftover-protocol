@@ -504,6 +504,7 @@ public final class RemoteClient: NSObject {
         if method.isWrite, case .failure(let error) = result, error.code == .presenceRequired {
             presenceOpenUntil = nil
             try await provePresenceIfNeeded()
+            try Task.checkCancellation()
             guard task === socket, channel != nil else { throw ClientError.notConnected }
             return try await send(RPCRequest(method: method), on: socket, timeout: explicitTimeout)
         }

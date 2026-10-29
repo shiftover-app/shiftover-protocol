@@ -42,6 +42,7 @@ public struct BrowserFrame: Sendable, Equatable {
     public static let maximumJPEGBytes = 512 * 1024
     public static let maximumMetadataBytes = 32 * 1024
     public static let maximumDimension = 2048
+    public static let maximumInteractionContextBytes = 4096
     public let paneID: UUID
     public let sequence: UInt64
     public let width: Int
@@ -54,18 +55,23 @@ public struct BrowserFrame: Sendable, Equatable {
     public let canGoForward: Bool
     public let isLoading: Bool
     public let loadError: String?
+    /// Opaque host-owned document/viewport identity, echoed unchanged with input.
+    /// Missing on older hosts; receivers must not infer freshness from sequence alone.
+    public let interactionContext: String?
     public let jpeg: Data
 
     public init(paneID: UUID, sequence: UInt64, width: Int, height: Int,
                 viewportWidth: Double, viewportHeight: Double, url: String,
                 title: String, canGoBack: Bool, canGoForward: Bool,
-                isLoading: Bool, jpeg: Data, loadError: String? = nil) {
+                isLoading: Bool, jpeg: Data, loadError: String? = nil,
+                interactionContext: String? = nil) {
         self.paneID = paneID; self.sequence = sequence
         self.width = width; self.height = height
         self.viewportWidth = viewportWidth; self.viewportHeight = viewportHeight
         self.url = url; self.title = title
         self.canGoBack = canGoBack; self.canGoForward = canGoForward
         self.isLoading = isLoading; self.jpeg = jpeg; self.loadError = loadError
+        self.interactionContext = interactionContext
     }
 
     private struct Metadata: Codable {
@@ -81,6 +87,7 @@ public struct BrowserFrame: Sendable, Equatable {
         let canGoForward: Bool
         let isLoading: Bool
         let loadError: String?
+        let interactionContext: String?
     }
 
     public var isValid: Bool {
@@ -89,6 +96,7 @@ public struct BrowserFrame: Sendable, Equatable {
             && viewportWidth > 0 && viewportWidth <= 16384
             && viewportHeight > 0 && viewportHeight <= 16384
             && (loadError?.utf8.count ?? 0) <= 8192
+            && (interactionContext?.utf8.count ?? 0) <= Self.maximumInteractionContextBytes
             && url.utf8.count <= 8192 && title.utf8.count <= 8192
             && jpeg.count >= 4 && jpeg.count <= Self.maximumJPEGBytes
             && jpeg.starts(with: [0xff, 0xd8]) && jpeg.suffix(2) == Data([0xff, 0xd9])
@@ -99,7 +107,8 @@ public struct BrowserFrame: Sendable, Equatable {
         let metadata = Metadata(paneID: paneID, sequence: sequence, width: width, height: height,
                                 viewportWidth: viewportWidth, viewportHeight: viewportHeight,
                                 url: url, title: title, canGoBack: canGoBack,
-                                canGoForward: canGoForward, isLoading: isLoading, loadError: loadError)
+                                canGoForward: canGoForward, isLoading: isLoading, loadError: loadError,
+                                interactionContext: interactionContext)
         guard let json = try? JSONEncoder().encode(metadata), json.count <= Self.maximumMetadataBytes else { return nil }
         let count = UInt32(json.count)
         var result = Data([UInt8(count >> 24), UInt8((count >> 16) & 255), UInt8((count >> 8) & 255), UInt8(count & 255)])
@@ -116,7 +125,8 @@ public struct BrowserFrame: Sendable, Equatable {
                                  viewportWidth: meta.viewportWidth, viewportHeight: meta.viewportHeight,
                                  url: meta.url, title: meta.title, canGoBack: meta.canGoBack,
                                  canGoForward: meta.canGoForward, isLoading: meta.isLoading,
-                                 jpeg: Data(data.dropFirst(4 + count)), loadError: meta.loadError)
+                                 jpeg: Data(data.dropFirst(4 + count)), loadError: meta.loadError,
+                                 interactionContext: meta.interactionContext)
         return frame.isValid ? frame : nil
     }
 }

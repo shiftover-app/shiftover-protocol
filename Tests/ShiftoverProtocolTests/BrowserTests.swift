@@ -3,11 +3,12 @@ import XCTest
 
 final class BrowserTests: XCTestCase {
     private let pane = UUID()
-    private func frame(width: Int = 1024, jpeg: Data = Data([255, 216, 1, 2, 255, 217])) -> BrowserFrame {
+    private func frame(width: Int = 1024, jpeg: Data = Data([255, 216, 1, 2, 255, 217]),
+                       context: String? = nil) -> BrowserFrame {
         BrowserFrame(paneID: pane, sequence: 42, width: width, height: 768,
                      viewportWidth: 1440, viewportHeight: 1080, url: "http://localhost:3000/",
                      title: "Shared browser", canGoBack: true, canGoForward: false,
-                     isLoading: false, jpeg: jpeg)
+                     isLoading: false, jpeg: jpeg, interactionContext: context)
     }
 
     func testBinaryRoundtripAndTruncation() throws {
@@ -22,6 +23,46 @@ final class BrowserTests: XCTestCase {
         XCTAssertNil(frame(width: 0).encoded())
         XCTAssertNil(frame(width: BrowserFrame.maximumDimension + 1).encoded())
         XCTAssertNil(frame(jpeg: Data(repeating: 0, count: BrowserFrame.maximumJPEGBytes + 1)).encoded())
+    }
+
+    func testInteractionContextRoundtripBoundsAndOlderFrame() throws {
+        let context = "{\"document\":\"opaque-token\",\"viewport\":[1440,1080]}"
+        let original = frame(context: context)
+        XCTAssertEqual(BrowserFrame.decode(try XCTUnwrap(original.encoded())), original)
+        let boundary = String(repeating: "é", count: BrowserFrame.maximumInteractionContextBytes / 2)
+        XCTAssertNotNil(frame(context: boundary).encoded())
+        XCTAssertNil(frame(context: boundary + "a").encoded())
+
+        let encoded = try XCTUnwrap(original.encoded())
+        let count = encoded.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
+        var metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.dropFirst(4).prefix(count))) as? [String: Any])
+        func rebuild(_ metadata: [String: Any]) throws -> Data {
+            let json = try JSONSerialization.data(withJSONObject: metadata)
+            let size = UInt32(json.count)
+            var value = Data([UInt8(size >> 24), UInt8((size >> 16) & 255), UInt8((size >> 8) & 255), UInt8(size & 255)])
+            value.append(json)
+            value.append(original.jpeg)
+            return value
+        }
+        metadata.removeValue(forKey: "interactionContext")
+        XCTAssertEqual(BrowserFrame.decode(try rebuild(metadata)), frame(), "pre-context peers omit the field")
+        metadata["interactionContext"] = boundary + "a"
+        XCTAssertNil(BrowserFrame.decode(try rebuild(metadata)), "untrusted peers cannot bypass the UTF-8 bound")
+    }
+
+    func testInputContextPreservesRequestIdentityAndOlderRequests() throws {
+        let request = RPCRequest(method: .browserInput(paneID: pane, input: .tap(x: 0.2, y: 0.3), context: "frame-context"))
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(RPCRequest.self, from: data), request)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var method = try XCTUnwrap(object["method"] as? [String: Any])
+        var input = try XCTUnwrap(method["browserInput"] as? [String: Any])
+        input.removeValue(forKey: "context")
+        method["browserInput"] = input
+        object["method"] = method
+        let oldRequest = try JSONDecoder().decode(RPCRequest.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(oldRequest.id, request.id)
+        XCTAssertEqual(oldRequest.method, .browserInput(paneID: pane, input: .tap(x: 0.2, y: 0.3)))
     }
 
     func testInputBoundsAndURLSchemes() {

@@ -19,6 +19,7 @@ final class SoftwarePresence: PresenceSigning {
     let owner = P256.Signing.PrivateKey()
     let unlocked = P256.Signing.PrivateKey()
     private(set) var signed: [PresenceLevel] = []
+    var onSign: ((PresenceLevel) -> Void)?
 
     nonisolated init() {}
 
@@ -29,6 +30,7 @@ final class SoftwarePresence: PresenceSigning {
 
     func sign(_ message: Data, level: PresenceLevel, context: LAContext?) throws -> Data {
         signed.append(level)
+        onSign?(level)
         return try (level == .owner ? owner : unlocked).signature(for: message).derRepresentation
     }
 }
@@ -120,6 +122,27 @@ final class PresenceClientTests: XCTestCase {
         try await client.perform(.interruptAgent(worktreeID: UUID()))
         XCTAssertEqual(mac.presenceProofs, 2, "proved again after the refusal")
         XCTAssertEqual(mac.writeRequestsHandled, 1, "and the write went through exactly once")
+    }
+
+    func testCancelledWriteIsNotRetriedAfterRenewingPresence() async throws {
+        let presence = SoftwarePresence()
+        let (mac, client) = try await connected(.presenceClosesEarly, presence: presence)
+        defer { client.disconnect(); mac.stop() }
+        client.requestTimeout = .seconds(2)
+        var operation: Task<Void, Error>?
+        presence.onSign = { _ in
+            if presence.signed.count == 2 { operation?.cancel() }
+        }
+        defer { presence.onSign = nil }
+        operation = Task { try await client.perform(.interruptAgent(worktreeID: UUID())) }
+        do {
+            try await operation?.value
+            XCTFail("cancelled interaction must not be retried after renewal")
+        } catch is CancellationError {
+            // A renewed presence window does not revive the cancelled gesture.
+        }
+        XCTAssertEqual(mac.presenceProofs, 2)
+        XCTAssertEqual(mac.writeRequestsHandled, 0)
     }
 
     func testWithoutKeysAWriteSaysWhatToFix() async throws {

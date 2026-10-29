@@ -145,6 +145,8 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case reviewDetails
     /// Live pty streaming (`.terminalData` / `.terminalInput`).
     case browserStream
+    /// Create or reuse a worktree Browser pane from the phone. Requires write access.
+    case browserCreation
     case terminalStream
     /// Desktop can request a push through Cloud on this device's behalf.
     case push

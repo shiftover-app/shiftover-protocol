@@ -241,10 +241,13 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// CURRENT geometry — `onOutputChunk` is a live tap with no history, so
     /// without the backfill a phone attaching mid-session sees a blank screen
     /// until the agent happens to emit something (D8).
+    case openBrowser(worktreeID: UUID)
     case attachBrowser(paneID: UUID)
     case detachBrowser(paneID: UUID)
     case browserFrameAcknowledged(paneID: UUID, sequence: UInt64)
-    case browserInput(paneID: UUID, input: BrowserInput)
+    /// Echo the displayed frame's opaque interaction context. Hosts reject stale or
+    /// missing context for gestures; explicit navigation may act independently.
+    case browserInput(paneID: UUID, input: BrowserInput, context: String? = nil)
 
     case attachTerminal(paneID: UUID)
     case detachTerminal(paneID: UUID)
@@ -282,7 +285,7 @@ extension RPCMethod {
              // nothing on the Mac but this connection's own window.
              .provePresence:
             return false
-        case .browserInput, .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .closeSharedTerminal, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .openBrowser, .browserInput, .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .closeSharedTerminal, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,
@@ -295,6 +298,7 @@ extension RPCMethod {
 }
 
 public enum RPCResult: Codable, Sendable, Equatable {
+    case browserOpened(paneID: UUID)
     case attachmentStarted(id: UUID)
     case attachmentProgress(offset: Int)
     case attachmentReady(path: String)
