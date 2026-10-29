@@ -144,6 +144,7 @@ public enum Capability: String, Codable, Sendable, Hashable {
     case terminalSnapshots
     case reviewDetails
     /// Live pty streaming (`.terminalData` / `.terminalInput`).
+    case browserStream
     case terminalStream
     /// Desktop can request a push through Cloud on this device's behalf.
     case push

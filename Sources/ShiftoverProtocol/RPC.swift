@@ -241,6 +241,11 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// CURRENT geometry — `onOutputChunk` is a live tap with no history, so
     /// without the backfill a phone attaching mid-session sees a blank screen
     /// until the agent happens to emit something (D8).
+    case attachBrowser(paneID: UUID)
+    case detachBrowser(paneID: UUID)
+    case browserFrameAcknowledged(paneID: UUID, sequence: UInt64)
+    case browserInput(paneID: UUID, input: BrowserInput)
+
     case attachTerminal(paneID: UUID)
     case detachTerminal(paneID: UUID)
     /// One plain-text screen without subscribing to raw terminal output.
@@ -264,7 +269,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .fitSharedTerminal, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .phonePreferences, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .attachBrowser, .detachBrowser, .browserFrameAcknowledged, .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .fitSharedTerminal, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .phonePreferences, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -277,7 +282,7 @@ extension RPCMethod {
              // nothing on the Mac but this connection's own window.
              .provePresence:
             return false
-        case .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .closeSharedTerminal, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
+        case .browserInput, .beginAttachment, .appendAttachment, .finishAttachment, .cancelAttachment, .answerAgentQuestion, .submitShellCommand, .createTerminalTab, .closeSharedTerminal, .gitMutate, .createAgentTab, .agentPaneAction, .renameAgentTab, .replyToAgent, .answerPermission, .enqueueTask, .kickoffTask, .approveAndMerge,
              .createPullRequest, .requestChanges,
              // Stopping an agent mid-turn is one of the more consequential writes.
              .interruptAgent,

@@ -88,6 +88,7 @@ public enum ServerEvent: Codable, Sendable, Equatable {
     /// The pane went away (closed, tab closed, shell exited). Go should tear
     /// down its emulator rather than showing a frozen last frame.
     case terminalClosed(paneID: UUID)
+    case browserClosed(paneID: UUID, reason: String)
 
     /// The desktop is going away deliberately (quit, sleep, bridge disabled).
     /// Lets Go show "Mac disconnected" instead of a generic network error —

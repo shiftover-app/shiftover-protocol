@@ -26,7 +26,13 @@ import ShiftoverProtocol
 public protocol RemoteClientDelegate: AnyObject {
     func remoteClient(_ client: RemoteClient, didReceive event: ServerEvent)
     func remoteClient(_ client: RemoteClient, didReceiveTerminalData data: Data, paneID: UUID)
+    func remoteClient(_ client: RemoteClient, didReceiveBrowserFrame frame: BrowserFrame)
     func remoteClient(_ client: RemoteClient, didChangeState state: RemoteClient.State)
+}
+
+@MainActor
+public extension RemoteClientDelegate {
+    func remoteClient(_ client: RemoteClient, didReceiveBrowserFrame frame: BrowserFrame) {}
 }
 
 @MainActor
@@ -57,6 +63,8 @@ public final class RemoteClient: NSObject {
     }
 
     public weak var delegate: RemoteClientDelegate?
+    /// Optional pane consumer; acknowledge only after accepting/rendering the frame.
+    public var onBrowserFrame: ((BrowserFrame) -> Void)?
 
     private let identity: RemoteIdentityKey
     private let deviceID: UUID
@@ -752,6 +760,13 @@ public final class RemoteClient: NSObject {
                 return
             }
             delegate?.remoteClient(self, didReceive: event)
+
+        case .browserFrame:
+            guard case .connected(_, let capabilities) = state,
+                  capabilities.contains(.browserStream),
+                  let browser = BrowserFrame.decode(payload) else { return }
+            delegate?.remoteClient(self, didReceiveBrowserFrame: browser)
+            onBrowserFrame?(browser)
 
         case .terminalData:
             guard let terminal = TerminalPayload.decode(payload) else { return }

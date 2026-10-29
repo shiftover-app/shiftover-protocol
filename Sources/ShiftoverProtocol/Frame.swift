@@ -29,6 +29,8 @@ public enum FrameType: UInt8, Sendable, CaseIterable {
     case terminalData  = 0x20
     /// Phone → desktop: keystrokes. `[16B paneID][raw bytes]`
     case terminalInput = 0x21
+    /// Desktop → subscribed phone: bounded BrowserFrame binary payload.
+    case browserFrame = 0x22
 }
 
 public struct Frame: Sendable, Equatable {

@@ -35,7 +35,7 @@ extension RPCMethod {
         // the host asks its user first (or not, for a collaborator it lets
         // drive without asking).
         case .createTerminalTab(let id, _), .createAgentTab(let id, _, _, _): return .worktree(id)
-        case .agentQuestions, .answerAgentQuestion, .agentInsights, .providerUsage,
+        case .attachBrowser, .detachBrowser, .browserFrameAcknowledged, .browserInput, .agentQuestions, .answerAgentQuestion, .agentInsights, .providerUsage,
              .gitMutate, .beginAttachment, .appendAttachment,
              .finishAttachment, .cancelAttachment, .notificationPresence, .phonePreferences,
              .agentPaneAction, .renameAgentTab, .fleetSummary,
