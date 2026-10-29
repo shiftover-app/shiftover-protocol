@@ -151,6 +151,9 @@ public enum Capability: String, Codable, Sendable, Hashable {
     /// an owner proof via `provePresence` before writing, or an unlocked proof
     /// on a lock-screen answer.
     case presenceProof
+    /// Keeps per-phone preferences (`RPCMethod.phonePreferences`): which
+    /// agent events notify the phone, and when it shows the Live Activity.
+    case phonePreferences
     /// Any capability this build does not recognise.
     case unknown
 

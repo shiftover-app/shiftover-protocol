@@ -37,7 +37,7 @@ extension RPCMethod {
         case .createTerminalTab(let id, _), .createAgentTab(let id, _, _, _): return .worktree(id)
         case .agentQuestions, .answerAgentQuestion, .agentInsights, .providerUsage,
              .gitMutate, .beginAttachment, .appendAttachment,
-             .finishAttachment, .cancelAttachment, .notificationPresence,
+             .finishAttachment, .cancelAttachment, .notificationPresence, .phonePreferences,
              .agentPaneAction, .renameAgentTab, .fleetSummary,
              .reviewItems, .monitorSummary, .reviewDetails, .listConversations,
              .conversationMessages, .unwatchConversation, .acknowledgeAgentStatus,

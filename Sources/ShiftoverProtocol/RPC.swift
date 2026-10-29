@@ -94,6 +94,10 @@ public enum RPCMethod: Codable, Sendable, Equatable {
     /// not refresh an old observation or count it toward a sustained transition.
     /// Optional for compatibility with the first presence-capable phone build.
     case notificationPresence(mode: PhoneNotificationMode?, rssi: Int?, sampleID: UUID? = nil)
+    /// Reads ONLY the authenticated phone's preferences, and replaces them
+    /// when `update` is set. Like `notificationPresence`, it changes nothing
+    /// but this phone's own delivery, so a read-only phone may set it.
+    case phonePreferences(update: PhonePreferencesDTO?)
     case createAgentTab(worktreeID: UUID, agent: AgentKindDTO, prompt: String, requestID: UUID)
     case agentPaneAction(paneID: UUID, sessionID: String?, action: AgentPaneAction)
     case renameAgentTab(tabID: UUID, title: String)
@@ -260,7 +264,7 @@ extension RPCMethod {
     /// compile until it is classified.
     public var isWrite: Bool {
         switch self {
-        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .fitSharedTerminal, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
+        case .attachSharedTerminal, .requestDrive, .releaseDrive, .reportFocus, .registerCollaborator, .requestRelayPass, .fitSharedTerminal, .agentQuestions, .providerUsage, .agentInsights, .gitBranches, .gitCompare, .gitCommitDetails, .gitRevisionDiff, .browseDirectory, .readWorkspaceFile, .gitSnapshot, .gitFileDiff, .notificationPresence, .phonePreferences, .workspace, .listProjects, .listWorktrees, .fleetSummary, .reviewItems,
              .shellSnapshot, .monitorSummary, .reviewDetails, .listPanes, .attachTerminal, .detachTerminal, .terminalSnapshot,
              // Watching an agent changes what the Mac SENDS, never what it
              // does — which is the point of a read-only device.
@@ -295,6 +299,7 @@ public enum RPCResult: Codable, Sendable, Equatable {
     case gitCommitDetails(GitCommitDetailsDTO)
     case shellSnapshot(ShellSnapshotDTO)
     case notificationPresence(NotificationPresenceDTO)
+    case phonePreferences(PhonePreferencesStateDTO)
     case workspace(WorkspaceDTO)
     case terminalTabCreated(tabID: UUID, paneID: UUID)
     case gitMutationCompleted(message: String)

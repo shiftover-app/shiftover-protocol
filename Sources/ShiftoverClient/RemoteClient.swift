@@ -875,6 +875,16 @@ extension RemoteClient {
         }
     }
 
+    /// This phone's preferences as the Mac holds them, replacing them first
+    /// when `update` is set.
+    public func phonePreferences(update: PhonePreferencesDTO? = nil) async throws -> PhonePreferencesStateDTO {
+        switch try await call(.phonePreferences(update: update)) {
+        case .phonePreferences(let value): return value
+        case .failure(let error): throw ClientError.refused(error.code, error.message)
+        default: throw ClientError.unexpectedResult
+        }
+    }
+
     /// Relative file suggestions scoped to a registered Mac worktree.
     public func worktreeFiles(worktreeID: UUID, query: String) async throws -> [String] {
         switch try await call(.listWorktreeFiles(worktreeID: worktreeID, query: query)) {

@@ -29,7 +29,7 @@ import Foundation
 
 /// What the phone shows. Sealed end to end; never visible to the relay or APNs.
 public struct PushContent: Codable, Sendable, Equatable {
-    public enum Kind: String, Codable, Sendable {
+    public enum Kind: String, Codable, Sendable, CaseIterable {
         /// Waiting for input → "Reply".
         case input
         /// Waiting for approval → "Allow" / "Deny".
