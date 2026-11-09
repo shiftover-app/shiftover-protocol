@@ -32,19 +32,35 @@ public struct PhonePreferencesDTO: Codable, Sendable, Equatable {
     /// notification settings, whatever they become.
     public var notificationKinds: [PushContent.Kind]?
     public var liveActivity: LiveActivityMode
+    /// Whether this phone has the lock-screen usage widget, which the Mac then
+    /// keeps current with usage pushes (`UsagePushSealing`). Reported by the
+    /// phone, not chosen by the user. `nil` in an update means "unchanged" —
+    /// the Mac keeps what it had — so an older phone, or a settings change made
+    /// from a copy read before the phone reported it, never switches it off.
+    public var usageWidget: Bool?
 
-    public init(notificationKinds: [PushContent.Kind]? = nil, liveActivity: LiveActivityMode = .whileWorking) {
+    public init(notificationKinds: [PushContent.Kind]? = nil, liveActivity: LiveActivityMode = .whileWorking,
+                usageWidget: Bool? = nil) {
         self.notificationKinds = notificationKinds
         self.liveActivity = liveActivity
+        self.usageWidget = usageWidget
     }
 
-    private enum CodingKeys: String, CodingKey { case notificationKinds, liveActivity }
+    private enum CodingKeys: String, CodingKey { case notificationKinds, liveActivity, usageWidget }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         notificationKinds = try container.decodeIfPresent([String].self, forKey: .notificationKinds)?
             .compactMap(PushContent.Kind.init(rawValue:))
         liveActivity = try container.decodeIfPresent(LiveActivityMode.self, forKey: .liveActivity) ?? .whileWorking
+        usageWidget = try? container.decodeIfPresent(Bool.self, forKey: .usageWidget)
+    }
+
+    /// `update` applied over these preferences: what the Mac stores.
+    public func applying(_ update: PhonePreferencesDTO) -> PhonePreferencesDTO {
+        var merged = update
+        if merged.usageWidget == nil { merged.usageWidget = usageWidget }
+        return merged
     }
 
     /// Whether this phone wants `kind`, given the Mac's own kinds.

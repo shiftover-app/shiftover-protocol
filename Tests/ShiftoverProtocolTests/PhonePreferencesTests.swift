@@ -60,3 +60,23 @@ final class PhonePreferencesTests: XCTestCase {
         .init(worktreeID: UUID(), paneID: nil, project: "p", branch: "b", agent: nil, status: status, since: Date())
     }
 }
+
+final class PhonePreferencesUsageWidgetTests: XCTestCase {
+    /// An update without the flag keeps the stored one: an older phone, or a
+    /// settings edit made from a stale copy, must not stop usage pushes.
+    func testAnUpdateWithoutTheFlagKeepsIt() throws {
+        let stored = PhonePreferencesDTO(liveActivity: .whileWorking, usageWidget: true)
+        XCTAssertEqual(stored.applying(PhonePreferencesDTO(liveActivity: .never)).usageWidget, true)
+        XCTAssertEqual(stored.applying(PhonePreferencesDTO(liveActivity: .never)).liveActivity, .never)
+        XCTAssertEqual(stored.applying(PhonePreferencesDTO(usageWidget: false)).usageWidget, false)
+    }
+
+    func testTheFlagRoundTripsAndOlderRecordsDecode() throws {
+        let encoded = try JSONEncoder().encode(PhonePreferencesDTO(usageWidget: true))
+        XCTAssertEqual(try JSONDecoder().decode(PhonePreferencesDTO.self, from: encoded).usageWidget, true)
+        let older = try JSONDecoder().decode(PhonePreferencesDTO.self, from: Data(#"{"liveActivity":"never"}"#.utf8))
+        XCTAssertNil(older.usageWidget)
+        let odd = try JSONDecoder().decode(PhonePreferencesDTO.self, from: Data(#"{"usageWidget":"yes"}"#.utf8))
+        XCTAssertNil(odd.usageWidget)
+    }
+}

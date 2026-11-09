@@ -107,3 +107,71 @@ final class PushSealingTests: XCTestCase {
         XCTAssertEqual(content().categoryIdentifier, "shiftover.permission")
     }
 }
+
+/// The usage box keeps the phone's lock-screen widget current while the app
+/// is closed. These pin that it opens only as a usage box, from the paired
+/// Mac, fits an APNs payload, and is refused once stale.
+final class UsagePushSealingTests: XCTestCase {
+
+    private let mac = RemoteIdentityKey()
+    private let phone = RemoteIdentityKey()
+
+    private func providers(detail: String? = nil) -> [ProviderUsageDTO] {
+        ["claude", "codex", "antigravity", "opencode", "copilot", "cursor"].map { id in
+            ProviderUsageDTO(id: id, name: id.capitalized, plan: "pro", state: "ready", updatedAt: Date(), windows: [
+                ProviderUsageWindowDTO(label: "5-hour window", percentUsed: 38.4, resetsAt: Date(timeIntervalSinceNow: 4000),
+                                       detail: detail, kind: ProviderUsageWindowDTO.sessionKind),
+                ProviderUsageWindowDTO(label: "Weekly", percentUsed: 61, resetsAt: Date(timeIntervalSinceNow: 90000),
+                                       detail: detail, kind: ProviderUsageWindowDTO.weeklyKind),
+                ProviderUsageWindowDTO(label: "Weekly (Sonnet)", percentUsed: 12, resetsAt: Date(timeIntervalSinceNow: 90000),
+                                       detail: detail, kind: ProviderUsageWindowDTO.otherKind)])
+        }
+    }
+
+    func testPairedPhoneOpensWhatThePairedMacSealed() throws {
+        let original = UsagePushContent(providers: providers())
+        let sealed = try UsagePushSealing.seal(original, toPhoneKey: phone.publicKeyData, from: mac)
+        let opened = try XCTUnwrap(UsagePushSealing.open(sealed, with: phone, fromAnyOf: [mac.publicKeyData]))
+        XCTAssertEqual(opened.content.providers.map(\.id), original.providers.map(\.id))
+        XCTAssertEqual(opened.content.providers.first?.windows.first?.percentUsed, 38.4)
+        XCTAssertEqual(opened.macKey, mac.publicKeyData)
+        XCTAssertNil(UsagePushSealing.open(sealed, with: phone, fromAnyOf: [RemoteIdentityKey().publicKeyData]))
+    }
+
+    func testUsageBoxesAndAgentPushesCannotBeOpenedAsEachOther() throws {
+        let usage = try UsagePushSealing.seal(UsagePushContent(providers: providers()),
+                                              toPhoneKey: phone.publicKeyData, from: mac)
+        XCTAssertNil(PushSealing.open(usage, with: phone, fromAnyOf: [mac.publicKeyData]))
+        let push = try PushSealing.seal(PushContent(kind: .done, worktreeID: UUID(), title: "t", subtitle: nil, body: "b"),
+                                        toPhoneKey: phone.publicKeyData, from: mac)
+        XCTAssertNil(UsagePushSealing.open(push, with: phone, fromAnyOf: [mac.publicKeyData]))
+    }
+
+    func testStaleOrFutureBoxesAreRefused() throws {
+        for sentAt in [Date(timeIntervalSinceNow: -UsagePushSealing.maxAge - 5), Date(timeIntervalSinceNow: 600)] {
+            let sealed = try UsagePushSealing.seal(UsagePushContent(providers: providers(), sentAt: sentAt),
+                                                   toPhoneKey: phone.publicKeyData, from: mac)
+            XCTAssertNil(UsagePushSealing.open(sealed, with: phone, fromAnyOf: [mac.publicKeyData]))
+        }
+    }
+
+    /// Every provider with three windows fits an APNs payload; long details are
+    /// dropped to make room rather than any provider.
+    func testAFullReportFitsAnAPNsPayload() throws {
+        let sealed = try UsagePushSealing.seal(UsagePushContent(providers: providers(detail: String(repeating: "$", count: 400))),
+                                               toPhoneKey: phone.publicKeyData, from: mac)
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "aps": ["content-available": 1],
+            "s": ["k": sealed.encapsulatedKey.base64EncodedString(), "c": sealed.ciphertext.base64EncodedString()]])
+        XCTAssertLessThanOrEqual(payload.count, 4096)
+        let opened = try XCTUnwrap(UsagePushSealing.open(sealed, with: phone, fromAnyOf: [mac.publicKeyData]))
+        XCTAssertEqual(opened.content.providers.count, 6)
+        XCTAssertNil(opened.content.providers.first?.windows.first?.detail)
+    }
+
+    func testAReportTooLargeEvenWithoutDetailsIsRefused() {
+        let many = (0..<80).flatMap { _ in providers() }
+        XCTAssertThrowsError(try UsagePushSealing.seal(UsagePushContent(providers: many),
+                                                       toPhoneKey: phone.publicKeyData, from: mac))
+    }
+}
