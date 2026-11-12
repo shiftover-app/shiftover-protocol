@@ -60,10 +60,14 @@ public struct WorktreeDTO: Codable, Sendable, Hashable, Identifiable {
     /// Newest agent message seen for this worktree — the push body, and the
     /// subtitle in the fleet list.
     public let lastAgentMessage: String?
+    /// What the worktree's working agents are doing, when they all agree —
+    /// see `AgentActivityDTO.rollup`. Absent from older hosts.
+    public var activity: AgentActivityDTO? = nil
 
     public init(id: UUID, projectID: UUID, branch: String, isMain: Bool,
                 agentStatus: AgentStatusDTO, baseBranch: String?,
-                lastAgentMessage: String?) {
+                lastAgentMessage: String?, activity: AgentActivityDTO? = nil) {
+        self.activity = activity
         self.id = id
         self.projectID = projectID
         self.branch = branch

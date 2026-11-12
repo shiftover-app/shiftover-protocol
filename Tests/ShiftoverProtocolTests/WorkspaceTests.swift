@@ -2,6 +2,38 @@ import XCTest
 @testable import ShiftoverProtocol
 
 final class WorkspaceTests: XCTestCase {
+    func testActivityRoundTripsAndDecodesFromOlderOrNewerHosts() throws {
+        let pane = AgentPaneDTO(id: UUID(), title: "a", agent: .claude, status: .working,
+                                conversationID: nil, sessionID: nil, isRunning: true, activity: .waitingOnShell)
+        XCTAssertEqual(try JSONDecoder().decode(AgentPaneDTO.self, from: JSONEncoder().encode(pane)).activity, .waitingOnShell)
+
+        // An older host sends no key; a newer one may send a kind this build
+        // does not know. Neither may fail the decode.
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(pane)) as! [String: Any]
+        object["activity"] = nil
+        XCTAssertNil(try JSONDecoder().decode(AgentPaneDTO.self, from: JSONSerialization.data(withJSONObject: object)).activity)
+        object["activity"] = "summarizing"
+        XCTAssertEqual(try JSONDecoder().decode(AgentPaneDTO.self, from: JSONSerialization.data(withJSONObject: object)).activity?.rawValue, "summarizing")
+
+        let worktree = WorktreeDTO(id: UUID(), projectID: UUID(), branch: "main", isMain: true, agentStatus: .working,
+                                   baseBranch: nil, lastAgentMessage: nil, activity: .compacting)
+        XCTAssertEqual(try JSONDecoder().decode(WorktreeDTO.self, from: JSONEncoder().encode(worktree)), worktree)
+    }
+
+    func testActivityRollupNeedsEveryWorkingSessionToAgree() {
+        typealias Entry = (status: AgentStatusDTO, activity: AgentActivityDTO?)
+        let shell: Entry = (.working, .waitingOnShell)
+        let compacting: Entry = (.working, .compacting)
+        let working: Entry = (.working, nil)
+        XCTAssertEqual(AgentActivityDTO.rollup([shell, (.present, nil), (.done, nil)]), .waitingOnShell)
+        XCTAssertEqual(AgentActivityDTO.rollup([compacting, compacting]), .compacting)
+        XCTAssertNil(AgentActivityDTO.rollup([shell, working]))
+        XCTAssertNil(AgentActivityDTO.rollup([shell, compacting]))
+        // A question outranks work: the row is not working at all.
+        XCTAssertNil(AgentActivityDTO.rollup([shell, (.input, nil)]))
+        XCTAssertNil(AgentActivityDTO.rollup([Entry]()))
+    }
+
     func testWorkspacePreservesDistinctAgentsInOneWorktree() throws {
         let project = UUID(), worktree = UUID()
         let panes = ["first", "second"].map { session in

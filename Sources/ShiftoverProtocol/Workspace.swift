@@ -47,11 +47,50 @@ public struct AgentPaneDTO: Codable, Sendable, Hashable, Identifiable {
     public var sessionID: String?
     public var startupPrompt: AgentStartupPromptDTO?
     public var isRunning: Bool
+    /// What a working session is doing — compacting, or waiting on a command
+    /// it started in the background. Absent from older hosts; only meaningful
+    /// while `status` is `.working`.
+    public var activity: AgentActivityDTO? = nil
     public init(id: UUID, title: String, agent: AgentKindDTO, status: AgentStatusDTO,
-                conversationID: UUID?, sessionID: String?, isRunning: Bool, startupPrompt: AgentStartupPromptDTO? = nil) {
+                conversationID: UUID?, sessionID: String?, isRunning: Bool, startupPrompt: AgentStartupPromptDTO? = nil,
+                activity: AgentActivityDTO? = nil) {
         self.startupPrompt = startupPrompt
+        self.activity = activity
         self.id = id; self.title = title; self.agent = agent; self.status = status
         self.conversationID = conversationID; self.sessionID = sessionID; self.isRunning = isRunning
+    }
+}
+
+/// A refinement of `.working` the Mac's sidebar draws with its own mark: the
+/// agent compacting its conversation, or its turn ended with a command it
+/// started in the background still running (the agent picks up again when the
+/// command exits). Not new `AgentStatusDTO` cases, because every consumer that
+/// means "working" (ordering, the Live Activity, notifications) must keep
+/// treating these as working.
+///
+/// A string-backed struct rather than an enum so a host that adds a kind does
+/// not fail an older phone's decode of the whole workspace — an unknown value
+/// just draws as plain working.
+public struct AgentActivityDTO: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+
+    public static let compacting = AgentActivityDTO(rawValue: "compacting")
+    public static let waitingOnShell = AgentActivityDTO(rawValue: "waitingOnShell")
+
+    /// The activity a row standing for several sessions shows, under the
+    /// status `AgentStatusDTO.rollup` gives it. Only for a working row, and
+    /// only when every working session shares it — a worktree with one agent
+    /// compacting and another at work reads as working (the Mac sidebar's
+    /// rule for a collapsed project).
+    public static func rollup<S: Sequence>(_ entries: S) -> AgentActivityDTO?
+    where S.Element == (status: AgentStatusDTO, activity: AgentActivityDTO?) {
+        let all = Array(entries)
+        guard AgentStatusDTO.rollup(all.map(\.status)) == .working else { return nil }
+        let working = all.filter { $0.status == .working }
+        guard let first = working.first?.activity,
+              working.allSatisfy({ $0.activity == first }) else { return nil }
+        return first
     }
 }
 
